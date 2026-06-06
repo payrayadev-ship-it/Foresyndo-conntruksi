@@ -3,7 +3,7 @@ import {
   Project, ProjectStatus, RABItem, GanttTask, FinanceTransaction, PurchaseOrder, 
   MaterialInventory, SDMStaff, QualityControlItem, SafetyRecord, DocumentRecord, 
   DailyReport, UserRole, UserProfile, AuditLog, MaterialMutation, ProgressReport,
-  RFIDiscussionComment, RFIStatusHistory, PortalSettings
+  RFIDiscussionComment, RFIStatusHistory, PortalSettings, Task, DivisionalMessage
 } from "../types";
 import { 
   initialProjects, initialRABItems, initialGanttTasks, initialTransactions, 
@@ -34,6 +34,8 @@ interface ProjectContextType {
   documents: DocumentRecord[];
   dailyReports: DailyReport[];
   progressReports: ProgressReport[];
+  tasks: Task[];
+  messages: DivisionalMessage[];
   notifications: Array<{ id: string; title: string; message: string; read: boolean; date: string }>;
   auditLogs: AuditLog[];
   darkMode: boolean;
@@ -76,6 +78,12 @@ interface ProjectContextType {
   updateRFIStatus: (docId: string, status: "Draft" | "Approved" | "Rejected" | "Pending Approval", note?: string) => void;
   addDailyReport: (rep: Omit<DailyReport, "id" | "projectId">) => void;
   addProgressReport: (pr: Omit<ProgressReport, "id" | "projectId">) => void;
+
+  // Tasks & Divisional Communication CRUD
+  addTask: (task: Omit<Task, "id" | "projectId" | "creatorName" | "creatorRole">) => void;
+  updateTaskStatus: (id: string, status: Task["status"], notes?: string) => void;
+  deleteTask: (id: string) => void;
+  addDivisionalMessage: (targetRole: UserRole | "Semua", text: string) => void;
   
   // AI Tools trigger
   runAIAnalysis: (type: "delay_analysis" | "cashflow_prediction" | "risk_assessment" | "minutes_generator" | "report_generator", extraPayload?: any) => Promise<{ text: string; isMocked: boolean; message?: string }>;
@@ -235,6 +243,103 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   });
 
+  const [tasksAll, setTasksAll] = useState<Record<string, Task[]>>(() => {
+    const saved = localStorage.getItem("fos_tasks");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Ensure all loaded tasks have a priority field fallback
+        Object.keys(parsed).forEach(key => {
+          parsed[key] = parsed[key].map((t: any) => ({
+            ...t,
+            priority: t.priority || "Medium"
+          }));
+        });
+        return parsed;
+      } catch (e) {
+        // ignore and fallback
+      }
+    }
+    return {
+      "proj-001": [
+        {
+          id: "task-01",
+          projectId: "proj-001",
+          title: "Verifikasi Mutasi Semen Portland",
+          description: "Lakukan audit dan sinkronisasi stok semen pc 50kg di gudang utama logistik.",
+          assignedRole: UserRole.QC_ENGINEER,
+          status: "Dalam Proses",
+          dueDate: "2026-06-10",
+          creatorName: "Hermawan (PM)",
+          creatorRole: UserRole.PROJECT_MANAGER,
+          priority: "High",
+          notes: "Sesuai laporan RFI #002."
+        },
+        {
+          id: "task-02",
+          projectId: "proj-001",
+          title: "Persetujuan RAB Addendum Balok Utama",
+          description: "Evaluasi pengajuan addendum biaya tambahan baja tulangan d22 lantai 3.",
+          assignedRole: UserRole.DIREKTUR,
+          status: "Belum Mulai",
+          dueDate: "2026-06-08",
+          creatorName: "Hermawan (PM)",
+          creatorRole: UserRole.PROJECT_MANAGER,
+          priority: "Medium"
+        },
+        {
+          id: "task-03",
+          projectId: "proj-001",
+          title: "Induksi K3 & Evaluasi Pengaman Tepi",
+          description: "Sosialisasi toolbox meeting tentang penggunaan safety harness di ketinggian > 2 meter.",
+          assignedRole: UserRole.SAFETY_OFFICER,
+          status: "Selesai",
+          dueDate: "2026-06-06",
+          creatorName: "Hermawan (PM)",
+          creatorRole: UserRole.PROJECT_MANAGER,
+          priority: "Low",
+          notes: "Telah selesai dilakukan dengan 12 staff lapangan."
+        }
+      ]
+    };
+  });
+
+  const [messagesAll, setMessagesAll] = useState<Record<string, DivisionalMessage[]>>(() => {
+    const saved = localStorage.getItem("fos_messages");
+    if (saved) return JSON.parse(saved);
+    return {
+      "proj-001": [
+        {
+          id: "msg-01",
+          projectId: "proj-001",
+          senderName: "Budi Santoso",
+          senderRole: UserRole.PROJECT_MANAGER,
+          targetRole: "Semua",
+          text: "Selamat pagi semua divisi. Mohon pastikan rencana kerja harian di-submit tepat waktu melalui portal.",
+          timestamp: "2026-06-06 08:00"
+        },
+        {
+          id: "msg-02",
+          projectId: "proj-001",
+          senderName: "Anton Wijaya",
+          senderRole: UserRole.SITE_ENGINEER,
+          targetRole: UserRole.QC_ENGINEER,
+          text: "Pak QC, berkas RFI #002 untuk pengecoran plat lantai 2 sudah siap divisualisasi. Mohon bantuannya.",
+          timestamp: "2026-06-06 08:45"
+        },
+        {
+          id: "msg-03",
+          senderName: "Rian Hidayat",
+          senderRole: UserRole.QC_ENGINEER,
+          targetRole: UserRole.SITE_ENGINEER,
+          projectId: "proj-001",
+          text: "Siap pak, jam 10:00 saya akan laksanakan inspeksi lapangan ke lokasi pengecoran.",
+          timestamp: "2026-06-06 09:12"
+        }
+      ]
+    };
+  });
+
   const [notifications, setNotifications] = useState<Array<{ id: string; title: string; message: string; read: boolean; date: string }>>([
     { id: "n-1", title: "RAB Tertunda", message: "Rencana Anggaran Biaya Proyek BSD City perlu persetujuan Direktur.", read: false, date: "2026-06-06 08:30" },
     { id: "n-2", title: "Keterlambatan Progres", message: "Kurva S Proyek Foresyndo Center menunjukkan deviasi negatif -4.1%", read: false, date: "2026-06-05 17:00" },
@@ -351,6 +456,14 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [progressAll]);
 
   useEffect(() => {
+    localStorage.setItem("fos_tasks", JSON.stringify(tasksAll));
+  }, [tasksAll]);
+
+  useEffect(() => {
+    localStorage.setItem("fos_messages", JSON.stringify(messagesAll));
+  }, [messagesAll]);
+
+  useEffect(() => {
     localStorage.setItem("fos_dark_mode", String(darkMode));
     if (darkMode) {
       document.documentElement.classList.add("dark");
@@ -413,6 +526,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const documents = docAll[activeProjId] || [];
   const dailyReports = dailyAll[activeProjId] || [];
   const progressReports = progressAll[activeProjId] || [];
+  const tasks = tasksAll[activeProjId] || [];
+  const messages = messagesAll[activeProjId] || [];
 
   const logAction = (action: string, details: string) => {
     const newLog: AuditLog = {
@@ -840,6 +955,61 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     logAction("Tambah Progress Fisik", `Pekerjaan ${pr.itemPekerjaan} menyumbang progres ${pr.persentaseProgress}%`);
   };
 
+  const addTask = (task: Omit<Task, "id" | "projectId" | "creatorName" | "creatorRole">) => {
+    const id = "task-" + Math.random().toString(36).substr(2, 9);
+    const newTask: Task = { 
+      ...task, 
+      id, 
+      projectId: activeProjId,
+      creatorName: currentUser?.name || "Offline User",
+      creatorRole: currentUser?.role || UserRole.ADMIN
+    };
+
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      return { ...prev, [activeProjId]: [newTask, ...list] };
+    });
+    logAction("Tambah Tugas", `Membuat tugas baru: ${task.title} untuk divisi ${task.assignedRole}`);
+  };
+
+  const updateTaskStatus = (id: string, status: Task["status"], notes?: string) => {
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      return { 
+        ...prev, 
+        [activeProjId]: list.map(item => item.id === id ? { ...item, status, notes: notes !== undefined ? notes : item.notes } : item) 
+      };
+    });
+    logAction("Ubah Status Tugas", `Mengubah status tugas ID: ${id} menjadi ${status}`);
+  };
+
+  const deleteTask = (id: string) => {
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      return { ...prev, [activeProjId]: list.filter(item => item.id !== id) };
+    });
+    logAction("Hapus Tugas", `Menghapus tugas ID: ${id}`);
+  };
+
+  const addDivisionalMessage = (targetRole: UserRole | "Semua", text: string) => {
+    const id = "msg-" + Math.random().toString(36).substr(2, 9);
+    const newMsg: DivisionalMessage = {
+      id,
+      projectId: activeProjId,
+      senderName: currentUser?.name || "Anonymous",
+      senderRole: currentUser?.role || UserRole.SITE_ENGINEER,
+      targetRole,
+      text,
+      timestamp: new Date().toLocaleDateString("id-ID") + " " + new Date().toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setMessagesAll(prev => {
+      const list = prev[activeProjId] || [];
+      return { ...prev, [activeProjId]: [...list, newMsg] };
+    });
+    logAction("Komunikasi Divisi", `Mengirim pesan komunikasi divisi untuk target ${targetRole}`);
+  };
+
   // Server-Side AI Assistant trigger
   const runAIAnalysis = async (
     type: "delay_analysis" | "cashflow_prediction" | "risk_assessment" | "minutes_generator" | "report_generator",
@@ -946,6 +1116,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       documents,
       dailyReports,
       progressReports,
+      tasks,
+      messages,
       notifications,
       auditLogs,
       darkMode,
@@ -984,6 +1156,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updateRFIStatus,
       addDailyReport,
       addProgressReport,
+      addTask,
+      updateTaskStatus,
+      deleteTask,
+      addDivisionalMessage,
       runAIAnalysis
     }}>
       {children}

@@ -10,6 +10,8 @@ import { SPlusCurve } from "./components/SPlusCurve";
 import { InventoryBarcode } from "./components/InventoryBarcode";
 import { SdmHR } from "./components/SdmHR";
 import { PortalSettingsPanel } from "./components/PortalSettingsPanel";
+import { LoginScreen } from "./components/LoginScreen";
+import { TaskAndCommunication } from "./components/TaskAndCommunication";
 
 // Icons
 import {
@@ -260,6 +262,134 @@ function AppContent() {
   const triggerFakePDFExport = (moduleName: string) => {
     alert(`File PDF untuk [Laporan ${moduleName}] berhasil diproses dalam antrean cetak setempat. File akan terunduh otomatis.`);
   };
+
+  if (loadingAuth) {
+    return (
+      <div className="h-screen w-screen bg-[#0b0f19] flex flex-col items-center justify-center text-slate-400 gap-4">
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-mono font-bold uppercase tracking-wider animate-pulse text-blue-400">Menghubungkan Sesi Firebase...</span>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <>
+        <LoginScreen />
+        
+        {/* Auth Error & Domain Troubleshooting Modal */}
+        {authError && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] overflow-y-auto font-sans text-slate-800 dark:text-slate-200">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden text-left">
+              {/* Header */}
+              <div className="bg-rose-50 dark:bg-rose-950/20 px-6 py-5 border-b border-rose-100 dark:border-rose-900/40 flex items-start gap-4">
+                <div className="p-2.5 bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                    Pengenalan Domain Belum Diotorisasi
+                  </h3>
+                  <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">
+                    Firebase Error: <span className="font-mono text-[10px] break-all bg-rose-100/50 dark:bg-rose-900/30 px-1 py-0.5 rounded">{authError.code}</span>
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setAuthError(null)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content body */}
+              <div className="p-6 space-y-5 text-xs text-slate-600 dark:text-slate-350 leading-relaxed">
+                <p>
+                  <b>Mengapa ini terjadi?</b> Domain sandbox / preview aktif Google AI Studio belum terdaftar dalam daftar <b>Authorized Domains</b> pada konfigurasi Firebase Authentication Anda.
+                </p>
+
+                {/* Action plan for standard Firestore Authorized Domains */}
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 border border-slate-150 dark:border-slate-850 rounded-xl space-y-2">
+                  <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 font-mono text-[11px]">
+                    <span>🔧 CARA METODE PERBAIKAN:</span>
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-500 dark:text-slate-400 pl-1">
+                    <li>Buka <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 font-semibold underline">Firebase Console</a> Anda.</li>
+                    <li>Pilih proyek Anda, beralih ke <b>Authentication</b> &gt; tab <b>Settings</b>.</li>
+                    <li>Geser ke bagian <b>Authorized Domains</b>, tekan tombol <b>Add Domain</b>.</li>
+                    <li>Masukkan domain berikut lalu Simpan:
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <code className="bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 px-2 py-1 rounded font-mono text-[10.5px] border border-blue-100 dark:border-blue-900 flex-grow select-all break-all text-center font-bold">
+                          {authError.hostname}
+                        </code>
+                      </div>
+                    </li>
+                  </ol>
+                </div>
+
+                {/* Developer Bypass Sandbox Alternative */}
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-5 space-y-4">
+                  <div>
+                    <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-500 font-bold" />
+                      Bypass Pengembang (Rekomendasi Sandbox)
+                    </h4>
+                    <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-0.5">
+                      Gunakan mode bypass di bawah ini untuk langsung mensimulasikan login peran tertentu demi keperluan demonstrasi.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      onClick={() => signInWithBypass(UserRole.DIREKTUR, "Foresyndo Direktur VIP")}
+                      className="flex flex-col items-start p-3 bg-blue-50/50 hover:bg-blue-50 dark:bg-blue-950/10 dark:hover:bg-blue-950/20 border border-blue-100 dark:border-blue-900 rounded-xl text-left transition cursor-pointer"
+                    >
+                      <span className="font-bold text-blue-600 dark:text-blue-400">Direktur / Owner</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Akses penuh laporan & persetujuan keuangan</span>
+                    </button>
+
+                    <button
+                      onClick={() => signInWithBypass(UserRole.PROJECT_MANAGER, "Budi Hartono (PM)")}
+                      className="flex flex-col items-start p-3 bg-indigo-50/50 hover:bg-indigo-50 dark:bg-indigo-950/10 dark:hover:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900 rounded-xl text-left transition cursor-pointer"
+                    >
+                      <span className="font-bold text-indigo-600 dark:text-indigo-400">Project Manager</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Kelola progres, RAB, sdm, & logistik harian</span>
+                    </button>
+
+                    <button
+                      onClick={() => signInWithBypass(UserRole.FINANCE, "Siti Rahma (Finance)")}
+                      className="flex flex-col items-start p-3 bg-emerald-50/50 hover:bg-emerald-50 dark:bg-emerald-950/10 dark:hover:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900 rounded-xl text-left transition cursor-pointer"
+                    >
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">Finance & Kas</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Entri & pembukuan mutasi keuangan lapangan</span>
+                    </button>
+
+                    <button
+                      onClick={() => signInWithBypass(UserRole.SITE_ENGINEER, "Anton Sanjaya (Engineer)")}
+                      className="flex flex-col items-start p-3 bg-amber-50/50 hover:bg-amber-50 dark:bg-amber-950/10 dark:hover:bg-amber-950/20 border border-amber-100 dark:border-amber-900 rounded-xl text-left transition cursor-pointer"
+                    >
+                      <span className="font-bold text-amber-600 dark:text-amber-400">Site Engineer</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Membuka RFI, melampirkan dokumen gambar</span>
+                    </button>
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setAuthError(null)}
+                      className="px-4 py-2 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-350 hover:bg-slate-50 dark:hover:bg-slate-800 font-bold rounded-lg transition text-xs cursor-pointer"
+                    >
+                      Tutup Pesan
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className={`flex h-screen w-screen overflow-hidden font-sans text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-[#0b0f19] ${darkMode ? "dark" : ""}`}>
@@ -539,6 +669,20 @@ function AppContent() {
             >
               <FileText className="w-4 h-4 opacity-80" />
               <span>Laporan Harian & Dokumen</span>
+            </button>
+
+            <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-widest pl-3 mt-6 mb-2 font-mono">Tugas & Komunikasi</span>
+
+            <button
+              onClick={() => setActiveTab("tasks_comms")}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                activeTab === "tasks_comms"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <CheckSquare className="w-4 h-4 text-amber-400 opacity-80" />
+              <span>Tugas & Chat Divisi</span>
             </button>
 
             <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-widest pl-3 mt-6 mb-2 font-mono">Gemini AI</span>
@@ -2088,6 +2232,13 @@ function AppContent() {
           {activeTab === "portal_settings" && (
             <div className="space-y-6">
               <PortalSettingsPanel />
+            </div>
+          )}
+
+          {/* TAB 13: TUGAS & CHAT DIVISI */}
+          {activeTab === "tasks_comms" && (
+            <div className="space-y-6">
+              <TaskAndCommunication />
             </div>
           )}
         </div>

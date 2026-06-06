@@ -223,3 +223,28 @@ export interface AuditLog {
   details: string;
   timestamp: string;
 }
+
+export interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  assignedRole: UserRole; // Target division/role assigned to this task
+  status: "Belum Mulai" | "Dalam Proses" | "Menunggu Review" | "Selesai";
+  dueDate: string;
+  creatorName: string;
+  creatorRole: UserRole;
+  priority: "Low" | "Medium" | "High";
+  notes?: string;
+}
+
+export interface DivisionalMessage {
+  id: string;
+  projectId: string;
+  senderName: string;
+  senderRole: UserRole;
+  targetRole: UserRole | "Semua"; // Targeted division/role or all roles
+  text: string;
+  timestamp: string; // e.g. "YYYY-MM-DD HH:MM"
+}
+
