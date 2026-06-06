@@ -1,0 +1,6 @@
+{
+  "name": "Foresyndo ConstrukPro",
+  "description": "Professional construction management suite for civil, architectural, MEP contracting, developers, and consulting firms.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

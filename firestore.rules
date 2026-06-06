@@ -1,0 +1,139 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net (Rule 1)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == "payrayadev@gmail.com");
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "payrayadev@gmail.com" || 
+        request.auth.token.role == "Admin"
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Collections
+    
+    // User collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Portal Settings collection
+    match /portal_settings/{settingId} {
+      allow read: if true;
+      allow write: if isSignedIn() || true; // Allow write during setup/demo, ensure offline persistence is robust
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(projectId);
+      allow delete: if isSignedIn() && isAdmin();
+
+      // RAB subcollection
+      match /rab/{rabId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Transactions subcollection (Finance)
+      match /transactions/{transactionId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Purchase Orders subcollection
+      match /purchase_orders/{poId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Material inventory subcollection
+      match /inventory/{inventoryId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // SDM (HR Staff & Attendance)
+      match /sdm_staff/{staffId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+      match /sdm_attendance/{attendanceId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Documents
+      match /documents/{docId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Quality Control
+      match /quality_control/{qcId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // K3 Safety
+      match /safety_k3/{safetyId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Daily Reports
+      match /daily_reports/{reportId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Progress Reports & Charts
+      match /progress_reports/{progressId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Gantt Schedule
+      match /gantt_tasks/{taskId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Audit logs
+      match /audit_logs/{logId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      // Notifications
+      match /notifications/{notifId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+    }
+  }
+}

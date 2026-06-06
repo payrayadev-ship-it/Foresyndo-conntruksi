@@ -1,0 +1,147 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing role-based authorization",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["Direktur", "Project Manager", "Site Engineer", "QC Engineer", "Safety Officer", "Finance", "Owner", "Admin"] },
+        "company": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Major construction project",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "nomorProyek": { "type": "string" },
+        "namaProyek": { "type": "string" },
+        "lokasi": { "type": "string" },
+        "owner": { "type": "string" },
+        "konsultan": { "type": "string" },
+        "kontraktor": { "type": "string" },
+        "tanggalMulai": { "type": "string" },
+        "tanggalSelesai": { "type": "string" },
+        "nilaiKontrak": { "type": "number" },
+        "status": { "type": "string", "enum": ["Tender", "Persiapan", "Berjalan", "Selesai", "Pemeliharaan"] },
+        "progress": { "type": "number" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["projectId", "nomorProyek", "namaProyek", "status"]
+    },
+    "RABItem": {
+      "title": "RABItem",
+      "description": "RAB (Rencana Anggaran Biaya) line item for a project",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "kodeItem": { "type": "string" },
+        "uraianPekerjaan": { "type": "string" },
+        "volume": { "type": "number" },
+        "satuan": { "type": "string" },
+        "hargaSatuan": { "type": "number" },
+        "total": { "type": "number" }
+      },
+      "required": ["id", "projectId", "kodeItem", "uraianPekerjaan"]
+    },
+    "FinanceTransaction": {
+      "title": "FinanceTransaction",
+      "description": "Financial ledger entry - cash in or out",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "type": { "type": "string", "enum": ["cash_in", "cash_out"] },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Draft", "Approved", "Processed"] }
+      },
+      "required": ["id", "projectId", "type", "category", "amount", "status"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Purchase order for materials and supplies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "nomorPO": { "type": "string" },
+        "supplier": { "type": "string" },
+        "material": { "type": "string" },
+        "qty": { "type": "number" },
+        "harga": { "type": "number" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["Draft", "Approved", "Ordered", "Delivered"] }
+      },
+      "required": ["id", "projectId", "nomorPO", "supplier", "status"]
+    },
+    "MaterialInventory": {
+      "title": "MaterialInventory",
+      "description": "Project inventory and mutation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "materialName": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "minStock": { "type": "number" },
+        "unit": { "type": "string" }
+      },
+      "required": ["id", "projectId", "materialName"]
+    },
+    "PortalSettings": {
+      "title": "PortalSettings",
+      "description": "Stores company profile and admin login credentials for the portal",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "companyAddress": { "type": "string" },
+        "companyEmail": { "type": "string" },
+        "companyPhone": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "adminUsername": { "type": "string" },
+        "adminPassword": { "type": "string" }
+      },
+      "required": ["companyName", "companyAddress", "companyEmail", "companyPhone"]
+    }
+  },
+  "firestore": {
+    "/portal_settings/{settingId}": {
+      "schema": "PortalSettings",
+      "description": "Stores company profile and admin credentials"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Stores major projects details"
+    },
+    "/projects/{projectId}/rab/{rabId}": {
+      "schema": "RABItem",
+      "description": "Stores RAB line items for a particular project"
+    },
+    "/projects/{projectId}/transactions/{transactionId}": {
+      "schema": "FinanceTransaction",
+      "description": "Stores transaction records for projects"
+    },
+    "/projects/{projectId}/purchase_orders/{poId}": {
+      "schema": "PurchaseOrder",
+      "description": "Stores purchase orders for a project"
+    },
+    "/projects/{projectId}/inventory/{inventoryId}": {
+      "schema": "MaterialInventory",
+      "description": "Stores inventory records for a project"
+    }
+  }
+}
