@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { jsPDF } from "jspdf";
+import QRCode from "qrcode";
 import { ProjectProvider, useProject } from "./context/ProjectContext";
 import { ProjectStatus, UserRole, Project, FinanceTransaction, PurchaseOrder, MaterialInventory, SDMStaff, QualityControlItem, SafetyRecord, DocumentRecord, DailyReport } from "./types";
 
@@ -6,12 +8,16 @@ import { ProjectStatus, UserRole, Project, FinanceTransaction, PurchaseOrder, Ma
 import { AIAssistant } from "./components/AIAssistant";
 import { GanttChart } from "./components/GanttChart";
 import { RABManagement } from "./components/RABManagement";
+import { BQManagement } from "./components/BQManagement";
 import { SPlusCurve } from "./components/SPlusCurve";
 import { InventoryBarcode } from "./components/InventoryBarcode";
 import { SdmHR } from "./components/SdmHR";
 import { PortalSettingsPanel } from "./components/PortalSettingsPanel";
 import { LoginScreen } from "./components/LoginScreen";
 import { TaskAndCommunication } from "./components/TaskAndCommunication";
+import { BudgetPieChart } from "./components/BudgetPieChart";
+import { EnterprisePurchaseOrder } from "./components/EnterprisePurchaseOrder";
+import { CashFlowManagement } from "./components/CashFlowManagement";
 
 // Icons
 import {
@@ -19,7 +25,7 @@ import {
   Package, Users, FileText, CheckSquare, ShieldCheck, Sun, Moon,
   ChevronRight, LogIn, LogOut, Plus, Trash2, Calendar, HardHat,
   CloudSun, Umbrella, Wind, Cloud, Bell, UserCheck, ShieldAlert,
-  MessageSquare, History, Send, X, Settings
+  MessageSquare, History, Send, X, Settings, FileSpreadsheet
 } from "lucide-react";
 
 function AppContent() {
@@ -176,6 +182,304 @@ function AppContent() {
       status: "Draft"
     });
     setShowAddPO(false);
+  };
+
+  const [poAlert, setPoAlert] = useState<{ message: string; type: "success" | "warning" | "info" } | null>(null);
+
+  const handleAutoGeneratePOs = () => {
+    const lowStockItems = inventory.filter(item => item.currentStock < item.minStock);
+    if (lowStockItems.length === 0) {
+      setPoAlert({
+        message: "Status Sediaan Aman: Tidak ada material yang menyentuh batas minimum stok saat ini (aman dari low stock)!",
+        type: "info"
+      });
+      return;
+    }
+
+    let count = 0;
+    lowStockItems.forEach(item => {
+      const existing = purchaseOrders.find(p => 
+        p.material.toLowerCase() === item.materialName.toLowerCase() && 
+        (p.status === "Draft" || p.status === "Approved" || p.status === "Ordered")
+      );
+
+      if (!existing) {
+        const deficient = item.minStock - item.currentStock;
+        const qty = Math.max(deficient * 2, item.minStock * 2);
+        
+        let supplier = "PT Kencana Suplai Konstruksi";
+        let harga = 75000;
+
+        const nameLower = item.materialName.toLowerCase();
+        if (nameLower.includes("besi") || nameLower.includes("beton") || nameLower.includes("baja") || nameLower.includes("wire")) {
+          supplier = "PT Krakatau Steel Tbk";
+          harga = 145000;
+        } else if (nameLower.includes("semen") || nameLower.includes("grobogan") || nameLower.includes("padang") || nameLower.includes("gresik")) {
+          supplier = "PT Semen Indonesia Group";
+          harga = 68000;
+        } else if (nameLower.includes("pasir") || nameLower.includes("batu") || nameLower.includes("sirtu") || nameLower.includes("kerikil")) {
+          supplier = "CV Selo Manunggal Abadi";
+          harga = 280000;
+        } else if (nameLower.includes("pipa") || nameLower.includes("pvc") || nameLower.includes("rucika")) {
+          supplier = "PT Wavin Duta Rucika";
+          harga = 95000;
+        } else if (nameLower.includes("cat") || nameLower.includes("dulux") || nameLower.includes("nippon")) {
+          supplier = "PT Nippon Paint Indonesia";
+          harga = 350000;
+        } else if (nameLower.includes("bata") || nameLower.includes("hebel") || nameLower.includes("merah")) {
+          supplier = "UD Sumber Makmur Bata";
+          harga = 12000;
+        } else if (nameLower.includes("kawat") || nameLower.includes("paku")) {
+          supplier = "UD Logam Abadi Lestari";
+          harga = 35050;
+        }
+
+        const randNum = Math.floor(100 + Math.random() * 900);
+        const nomorPO = `PO-AUTO-${item.id.replace("inv-", "").toUpperCase()}-${randNum}`;
+
+        addPurchaseOrder({
+          nomorPO,
+          supplier,
+          material: item.materialName,
+          qty,
+          harga,
+          total: qty * harga,
+          status: "Draft"
+        });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      setPoAlert({
+        message: `Sistem Pengadaan Otomatis Foresyndo berhasil membuat ${count} draf Purchase Order (PO) baru berdasarkan analisis stok kritis sediaan!`,
+        type: "success"
+      });
+    } else {
+      setPoAlert({
+        message: "Duplikasi Dibatalkan: Seluruh barang logistik berstatus low-stock sudah dibuatkan PO-nya & sedang diproses.",
+        type: "warning"
+      });
+    }
+  };
+
+  const handleExportPOPDF = async (po: PurchaseOrder) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const marginX = 15;
+    let currentY = 15;
+
+    doc.setFillColor(15, 23, 42); 
+    doc.rect(0, 0, 210, 40, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text(selectedProject ? selectedProject.kontraktor.toUpperCase() : "PT FORESYNDO CONTRACTOR GROUP", marginX, 15);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Sistem Pengadaan Rantai Pasok & Manajemen Gudang Lapangan", marginX, 21);
+    doc.text(`Proyek: ${selectedProject ? selectedProject.namaProyek : "Foresyndo BSD Project"}`, marginX, 26);
+    doc.text(`Lokasi: ${selectedProject ? selectedProject.lokasi : "BSD City, Tangerang"}`, marginX, 31);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(245, 158, 11); 
+    doc.text("PURCHASE ORDER (PO)", 135, 15);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(`Nomor PO: ${po.nomorPO}`, 135, 21);
+    doc.text(`Status Dokumen: ${po.status.toUpperCase()}`, 135, 26);
+    doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString()}`, 135, 31);
+
+    currentY = 50;
+
+    doc.setFillColor(248, 250, 252); 
+    doc.rect(marginX, currentY, 180, 22, "F");
+    doc.setDrawColor(226, 232, 240); 
+    doc.rect(marginX, currentY, 180, 22, "D");
+
+    doc.setTextColor(71, 85, 105); 
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text("PENGIRIM (MITRA SUPPLIER / VENDOR):", marginX + 4, currentY + 5);
+    doc.text("TUJUAN PENGIRIMAN (SITE PROYEK):", marginX + 94, currentY + 5);
+
+    doc.setTextColor(15, 23, 42); 
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text(po.supplier || "Supplier Lokal Sahat", marginX + 4, currentY + 10);
+    doc.text("Mitra Rantai Pasok Terverifikasi", marginX + 4, currentY + 14);
+
+    doc.text(selectedProject ? selectedProject.namaProyek : "BSD Urban Development", marginX + 94, currentY + 10);
+    doc.text(selectedProject ? `${selectedProject.lokasi}` : "Tangerang Banten", marginX + 94, currentY + 14);
+
+    currentY += 30;
+
+    doc.setFillColor(15, 23, 42); 
+    doc.rect(marginX, currentY, 180, 8, "F");
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.text("Deskripsi Pekerjaan / Urutan Material", marginX + 4, currentY + 5.5);
+    doc.text("Kuantitas (Qty)", marginX + 85, currentY + 5.5);
+    doc.text("Harga Satuan", marginX + 115, currentY + 5.5);
+    doc.text("Total Nominal", marginX + 150, currentY + 5.5);
+
+    currentY += 8;
+
+    doc.setFillColor(255, 255, 255);
+    doc.rect(marginX, currentY, 180, 10, "F");
+    doc.setDrawColor(241, 245, 249);
+    doc.line(marginX, currentY + 10, marginX + 180, currentY + 10);
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text(po.material, marginX + 4, currentY + 6.5);
+    doc.text(`${po.qty} Unit`, marginX + 85, currentY + 6.5);
+    doc.text(`Rp ${po.harga.toLocaleString("id-ID")}`, marginX + 115, currentY + 6.5);
+    
+    doc.setFont("Helvetica", "bold");
+    doc.text(`Rp ${(po.qty * po.harga).toLocaleString("id-ID")}`, marginX + 150, currentY + 6.5);
+
+    currentY += 10;
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(marginX, currentY, 180, 12, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.line(marginX, currentY, marginX + 180, currentY);
+    doc.line(marginX, currentY + 12, marginX + 180, currentY + 12);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text("JUMLAH NOMINAL PO (TOTAL PENGADAAN):", marginX + 4, currentY + 7.5);
+    doc.setTextColor(245, 158, 11); 
+    doc.setFontSize(11);
+    doc.text(`Rp ${(po.qty * po.harga).toLocaleString("id-ID")}`, marginX + 140, currentY + 8);
+
+    currentY += 15;
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text("PERSYARATAN & REGULASI RANTAI PASOK:", marginX, currentY);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text("1. Dropping material wajib menyertakan Nota Pembelian, Surat Jalan asli, dan Lampiran PO ini.", marginX, currentY + 4);
+    doc.text("2. Bahan baku harus melalui uji kelayakan K3 / Inspeksi Tim QC Foresyndo di lokasi.", marginX, currentY + 7);
+    doc.text("3. Penagihan termin keuangan wajib memuat Barcode Verifikasi di bawah ini.", marginX, currentY + 10);
+
+    currentY += 16;
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(marginX, currentY, marginX + 180, currentY);
+    
+    currentY += 5;
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text("PENGESAHAN DIGITAL SECARA BARCODE (DIGITAL AUTHORIZATION & CRYPTO SIGNATURE)", marginX, currentY);
+
+    currentY += 4;
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Keaslian dokumen divalidasi lewat enkripsi QR Code Foresyndo Construction Suite.", marginX, currentY);
+
+    currentY += 6;
+
+    const creatorPayload = JSON.stringify({
+      poId: po.id,
+      poNo: po.nomorPO,
+      material: po.material,
+      qty: po.qty,
+      total: po.qty * po.harga,
+      signer: currentUser?.name || "PM Foresyndo",
+      role: "Site Manager / PM",
+      timestamp: new Date().toISOString()
+    });
+
+    const approverPayload = JSON.stringify({
+      poId: po.id,
+      poNo: po.nomorPO,
+      total: po.qty * po.harga,
+      status: po.status,
+      signer: "Direksional PT Foresyndo",
+      approved: po.status !== "Draft",
+      verified: true
+    });
+
+    try {
+      const creatorQR = await QRCode.toDataURL(creatorPayload, { width: 120, margin: 1 });
+      const approverQR = await QRCode.toDataURL(approverPayload, { width: 120, margin: 1 });
+
+      const boxW = 85;
+      const boxH = 34;
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(marginX, currentY, boxW, boxH, "F");
+      doc.rect(marginX, currentY, boxW, boxH, "D");
+      doc.addImage(creatorQR, "PNG", marginX + boxW - 24, currentY + 4, 20, 20);
+      
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.text("DIAJUKAN OLEH (PREPARED PM):", marginX + 4, currentY + 6);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Divisi Pengadaan Logistik", marginX + 4, currentY + 11);
+      doc.text(`Nama: ${currentUser?.name || "Staff Logistik"}`, marginX + 4, currentY + 15);
+      doc.text("Status: SIGNED (BARCODE VALID)", marginX + 4, currentY + 19);
+      doc.text("[Scan Barcode Digital untuk verifikasi]", marginX + 4, currentY + 24);
+      doc.text(`ID: PM-${po.id.substring(3,8).toUpperCase()}`, marginX + 4, currentY + 28);
+
+      const rigX = marginX + boxW + 10;
+      doc.setFillColor(248, 250, 252);
+      doc.rect(rigX, currentY, boxW, boxH, "F");
+      doc.rect(rigX, currentY, boxW, boxH, "D");
+      doc.addImage(approverQR, "PNG", rigX + boxW - 24, currentY + 4, 20, 20);
+      
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.text("DISETUJUI OLEH (APPROVED BY):", rigX + 4, currentY + 6);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Dewan Direksi & Manajemen Keuangan", rigX + 4, currentY + 11);
+      doc.text(po.status === "Approved" || po.status === "Ordered" || po.status === "Delivered" ? "Nama: Direktur Utama Foresyndo" : "Nama: (Persetujuan Tertunda)", rigX + 4, currentY + 15);
+      
+      if (po.status === "Draft") {
+        doc.setTextColor(239, 68, 68); 
+        doc.setFont("Helvetica", "bold");
+        doc.text("Status: TERTUNDA / PENDING DRAFT", rigX + 4, currentY + 19);
+      } else {
+        doc.setTextColor(16, 185, 129); 
+        doc.setFont("Helvetica", "bold");
+        doc.text("Status: APPROVED (BARCODE SAH)", rigX + 4, currentY + 19);
+      }
+      
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("Helvetica", "normal");
+      doc.text("[Scan Barcode Digital untuk verifikasi]", rigX + 4, currentY + 24);
+      doc.text(`ID: DIR-${po.id.substring(3,8).toUpperCase()}`, rigX + 4, currentY + 28);
+
+    } catch (err) {
+      console.error("Gagal menggambar digital barcode QR signature ke PDF:", err);
+    }
+
+    doc.save(`Purchase_Order_Foresyndo_${po.nomorPO}.pdf`);
   };
 
   const handleCreateQCSubmit = (e: React.FormEvent) => {
@@ -583,6 +887,21 @@ function AppContent() {
             </button>
 
             <button
+              onClick={() => setActiveTab("bq")}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                activeTab === "bq"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 opacity-80 text-blue-400" />
+              <span className="flex items-center gap-1">
+                <span>Modul BQ & Volume</span>
+                <span className="bg-blue-500/20 text-blue-400 font-extrabold text-[8px] px-1 py-0.2 rounded uppercase">New</span>
+              </span>
+            </button>
+
+            <button
               onClick={() => setActiveTab("gantt")}
               className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
                 activeTab === "gantt"
@@ -866,8 +1185,8 @@ function AppContent() {
                 </div>
               </div>
 
-              {/* Major visual charts: Cash Flow and Monthly trends */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Major visual charts: Cash Flow, Monthly trends, and budget distribution */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Cash Flow analysis */}
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-sm">
                   <h3 className="text-sm font-bold text-slate-800 dark:text-white mb-1">Grafik Cash Flow & Likuiditas</h3>
@@ -963,6 +1282,9 @@ function AppContent() {
                     <span className="flex items-center"><span className="w-2.5 h-2.5 bg-amber-500 rounded mr-1.5" /> Realisasi Lapangan</span>
                   </div>
                 </div>
+
+                {/* Proportion of RAB Biaya Pie Chart */}
+                <BudgetPieChart />
               </div>
 
               {/* Sub-panels grids */}
@@ -1205,6 +1527,13 @@ function AppContent() {
             </div>
           )}
 
+          {/* TAB 3.5: MODUL BQ */}
+          {activeTab === "bq" && (
+            <div className="space-y-6">
+              <BQManagement />
+            </div>
+          )}
+
           {/* TAB 4: GANTT CHART & S-CURVE */}
           {activeTab === "gantt" && (
             <div className="space-y-8">
@@ -1216,290 +1545,13 @@ function AppContent() {
           {/* TAB 5: FINANCIAL LEDGER */}
           {activeTab === "finance" && (
             <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-6">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800 dark:text-white">Aliran Arus Kas (Keuangan)</h2>
-                  <p className="text-xs text-slate-400">Mencatat termin masuk, retensi 5%, pengeluaran upah, material, alat, operasional</p>
-                </div>
-                <button
-                  onClick={() => setShowAddTx(!showAddTx)}
-                  className="flex items-center space-x-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs mt-3 sm:mt-0 cursor-pointer shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Log Transaksi Baru</span>
-                </button>
-              </div>
-
-              {showAddTx && (
-                <form onSubmit={handleCreateTxSubmit} className="bg-white dark:bg-slate-900 border border-slate-205 dark:border-slate-800 p-6 rounded-xl shadow-md grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Tipe Saldo</label>
-                    <select
-                      value={newTx.type}
-                      onChange={(e) => setNewTx({ ...newTx, type: e.target.value as any })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 text-xs p-2 rounded"
-                    >
-                      <option value="cash_in">Penerimaan (Cash In)</option>
-                      <option value="cash_out">Pengeluaran (Cash Out)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Kategori Biaya</label>
-                    <select
-                      value={newTx.category}
-                      onChange={(e) => setNewTx({ ...newTx, category: e.target.value as any })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 text-xs p-2 rounded"
-                    >
-                      {newTx.type === "cash_in" ? (
-                        <>
-                          <option value="Uang Muka">Uang Muka (DP)</option>
-                          <option value="Termin">Termin Progres</option>
-                          <option value="Retensi">Retensi Kontrak</option>
-                          <option value="Addendum">Addendum Tambahan</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Material">Material Gudang</option>
-                          <option value="Upah">Upah Tukang & Mandor</option>
-                          <option value="Subkontraktor">Subkontraktor Spesialis</option>
-                          <option value="Alat">Sewa Alat Berat</option>
-                          <option value="Operasional">Operational & Kantor Lapangan</option>
-                        </>
-                      )}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Nominal Transaksi (Rp)</label>
-                    <input
-                      type="number"
-                      value={newTx.amount}
-                      onChange={(e) => setNewTx({ ...newTx, amount: Number(e.target.value) })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Tanggal Bayar</label>
-                    <input
-                      type="date"
-                      value={newTx.date}
-                      onChange={(e) => setNewTx({ ...newTx, date: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                    />
-                  </div>
-                  <div className="md:col-span-4">
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Keterangan Tambahan</label>
-                    <input
-                      type="text"
-                      placeholder="misal: Pembayaran beton ready mix batch 4"
-                      value={newTx.description}
-                      onChange={(e) => setNewTx({ ...newTx, description: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                    />
-                  </div>
-                  <div className="md:col-span-4 flex justify-end">
-                    <button
-                      type="submit"
-                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow cursor-pointer"
-                    >
-                      Kirim Transaksi
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Transactions details table list */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-                <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/40">
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase font-mono">Buku Kas & Jurnal Keuangan</span>
-                  <div className="text-right text-xs">
-                    <span className="text-emerald-500 font-bold mr-4">Total Masuk: Rp {cashInTotal_Selected.toLocaleString("id-ID")}</span>
-                    <span className="text-orange-500 font-bold">Total Keluar: Rp {cashOutTotal_Selected.toLocaleString("id-ID")}</span>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-xs text-left">
-                    <thead className="bg-[#1e293b] text-slate-450 uppercase font-bold font-mono">
-                      <tr>
-                        <th className="py-3 px-4 text-white">Waktu</th>
-                        <th className="py-3 px-4 text-white">Kategori</th>
-                        <th className="py-3 px-4 text-white">Deskripsi Log</th>
-                        <th className="py-3 px-4 text-white text-right">Debit (+ Cash In)</th>
-                        <th className="py-3 px-4 text-white text-right">Kredit (- Cash Out)</th>
-                        <th className="py-3 px-4 text-white text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-650 dark:text-slate-300 leading-normal">
-                      {transactions.map((t) => (
-                        <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
-                          <td className="py-3.5 px-4 font-mono font-bold">{t.date}</td>
-                          <td className="py-3.5 px-4 font-semibold text-slate-700 dark:text-slate-200">{t.category}</td>
-                          <td className="py-3.5 px-4 font-medium">{t.description}</td>
-                          <td className="py-3.5 px-4 text-right text-emerald-500 font-bold font-mono">
-                            {t.type === "cash_in" ? `+ Rp ${t.amount.toLocaleString("id-ID")}` : "-"}
-                          </td>
-                          <td className="py-3.5 px-4 text-right text-orange-400 font-bold font-mono">
-                            {t.type === "cash_out" ? `- Rp ${t.amount.toLocaleString("id-ID")}` : "-"}
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            {t.status === "Approved" ? (
-                              <span className="px-2 py-[1.5px] bg-emerald-50 text-emerald-600 rounded-full font-bold">Approved</span>
-                            ) : t.status === "Processed" ? (
-                              <span className="px-2 py-[1.5px] bg-[#e0a96d]/15 text-[#e0a96d] rounded-full font-bold">Processed</span>
-                            ) : (
-                              <div className="flex items-center justify-center space-x-2">
-                                <span className="px-2 py-[1.5px] bg-slate-100 text-slate-500 dark:bg-slate-800 text-slate-300 rounded-full font-bold">Draft</span>
-                                <button
-                                  onClick={() => approveTransaction(t.id)}
-                                  className="text-[9px] bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-1.5 py-0.5 rounded transition cursor-pointer"
-                                >
-                                  SETUJU
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <CashFlowManagement />
             </div>
           )}
 
           {/* TAB 6: PURCHASE ORDER */}
           {activeTab === "po" && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-6">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800 dark:text-white">Purchase Orders (PO)</h2>
-                  <p className="text-xs text-slate-400">Pengadaan bahan baku, approval PM/Direktur, and monitoring status drop-off material</p>
-                </div>
-                <button
-                  onClick={() => setShowAddPO(!showAddPO)}
-                  className="flex items-center space-x-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs mt-3 sm:mt-0 cursor-pointer shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Log PO Baru</span>
-                </button>
-              </div>
-
-              {showAddPO && (
-                <form onSubmit={handleCreatePOSubmit} className="bg-white dark:bg-slate-900 border border-slate-205 dark:border-slate-800 p-6 rounded-xl shadow-md grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Nomor PO</label>
-                    <input
-                      type="text"
-                      placeholder="PO-FOS-105"
-                      value={newPO.nomorPO}
-                      onChange={(e) => setNewPO({ ...newPO, nomorPO: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Nama Supplier</label>
-                    <input
-                      type="text"
-                      placeholder="PT Krakatau Steel"
-                      value={newPO.supplier}
-                      onChange={(e) => setNewPO({ ...newPO, supplier: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Material Konstruksi</label>
-                    <input
-                      type="text"
-                      placeholder="Besi Beton D16 Ulir"
-                      value={newPO.material}
-                      onChange={(e) => setNewPO({ ...newPO, material: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Qty (Kuantitas)</label>
-                    <input
-                      type="number"
-                      value={newPO.qty}
-                      onChange={(e) => setNewPO({ ...newPO, qty: Number(e.target.value) })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">Harga Satuan (Rp)</label>
-                    <input
-                      type="number"
-                      value={newPO.harga}
-                      onChange={(e) => setNewPO({ ...newPO, harga: Number(e.target.value) })}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-850 dark:text-white rounded p-2"
-                    />
-                  </div>
-                  <div className="md:col-span-4 flex justify-end space-x-2">
-                    <button
-                      type="submit"
-                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow cursor-pointer"
-                    >
-                      Ajukan PO
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Purchase summary card lists */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {purchaseOrders.map((po) => (
-                  <div key={po.id} className="p-5 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-xl shadow-sm text-xs space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-400 font-bold font-mono">
-                          {po.nomorPO}
-                        </span>
-                        <h4 className="text-sm font-bold mt-1.5">{po.supplier}</h4>
-                      </div>
-                      
-                      {/* State badge changer */}
-                      <select
-                        value={po.status}
-                        onChange={(e) => updatePOStatus(po.id, e.target.value as any)}
-                        className={`text-[10px] font-bold p-1 rounded focus:outline-none border border-slate-250 cursor-pointer ${
-                          po.status === "Delivered" ? "bg-emerald-50 text-emerald-600" :
-                          po.status === "Ordered" ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-600"
-                        }`}
-                      >
-                        <option value="Draft">Draft</option>
-                        <option value="Approved">Approved</option>
-                        <option value="Ordered">Ordered</option>
-                        <option value="Delivered">Delivered</option>
-                      </select>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-800 pt-3">
-                      <div>
-                        <span className="block text-[9px] text-slate-400 uppercase font-medium">Bahan Baku</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{po.material}</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] text-slate-400 uppercase font-medium font-mono">Total Biaya PO</span>
-                        <span className="font-extrabold text-amber-500 font-mono">
-                          Rp {(po.qty * po.harga).toLocaleString("id-ID")}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] text-slate-400 uppercase font-medium">Kuantitas</span>
-                        <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono">{po.qty} Unit</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] text-slate-400 uppercase font-medium">Satu Satuan</span>
-                        <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono">Rp {po.harga.toLocaleString("id-ID")}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <EnterprisePurchaseOrder />
           )}
 
           {/* TAB 7: LOGISTIK & GUDANG */}

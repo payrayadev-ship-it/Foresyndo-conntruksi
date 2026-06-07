@@ -1,14 +1,23 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useProject } from "../context/ProjectContext";
 import QRCode from "qrcode";
+import { jsPDF } from "jspdf";
 import { 
   QrCode, ScanLine, ArrowUpRight, ArrowDownLeft, Sliders, AlertTriangle, 
   Printer, Download, Eye, CheckCircle, RefreshCw, Layers, Plus, Minimize2,
-  Trash2, ClipboardList, Package, Info, CheckSquare, Sparkles, HelpCircle, FileText
+  Trash2, ClipboardList, Package, Info, CheckSquare, Sparkles, HelpCircle, FileText,
+  Edit2, Search, History, ListFilter, Check, X
 } from "lucide-react";
 
 export const InventoryBarcode: React.FC = () => {
-  const { inventory, mutations, addMaterialMutation } = useProject();
+  const { 
+    inventory, 
+    mutations, 
+    addMaterialMutation,
+    addInventoryItem,
+    updateInventoryItem,
+    deleteInventoryItem
+  } = useProject();
   
   // Selection and form states
   const [selectedMaterialId, setSelectedMaterialId] = useState<string>("");
@@ -24,6 +33,30 @@ export const InventoryBarcode: React.FC = () => {
   const [scannerStatus, setScannerStatus] = useState<string>("");
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [scanHistory, setScanHistory] = useState<Array<{ time: string; material: string; type: string; qty: number }>>([]);
+
+  // --- INVENTORY MANAGER STATE ---
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null); // holds MaterialInventory | null
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Add Item form State
+  const [addName, setAddName] = useState("");
+  const [addMinStock, setAddMinStock] = useState<number>(10);
+  const [addUnit, setAddUnit] = useState("Pcs");
+  const [addInitialStock, setAddInitialStock] = useState<number>(0);
+
+  // Edit Item form State
+  const [editName, setEditName] = useState("");
+  const [editMinStock, setEditMinStock] = useState<number>(10);
+  const [editUnit, setEditUnit] = useState("Pcs");
+  const [editCurrentStock, setEditCurrentStock] = useState<number>(0);
+
+  // Search filter for Sediaan Stok Terdaftar
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Ledger Filter states
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [ledgerType, setLedgerType] = useState<"ALL" | "masuk" | "keluar">("ALL");
 
   // Generate QR Code data URLs for each inventory item
   useEffect(() => {
@@ -200,6 +233,172 @@ export const InventoryBarcode: React.FC = () => {
     document.title = origTitle;
   };
 
+  // --- CRUD ACTIONS FOR INVENTORY MANAGER ---
+  const handleAddMaterialSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addName.trim()) return;
+    addInventoryItem({
+      materialName: addName.trim(),
+      minStock: Number(addMinStock) || 0,
+      unit: addUnit || "Pcs",
+      currentStock: Number(addInitialStock) || 0,
+    });
+    setAddName("");
+    setAddMinStock(10);
+    setAddUnit("Pcs");
+    setAddInitialStock(0);
+    setShowAddForm(false);
+  };
+
+  const handleEditMaterialSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem || !editName.trim()) return;
+    updateInventoryItem({
+      ...editingItem,
+      materialName: editName.trim(),
+      minStock: Number(editMinStock) || 0,
+      unit: editUnit || "Pcs",
+      currentStock: Number(editCurrentStock) || 0,
+    });
+    setEditingItem(null);
+  };
+
+  const handleStartEdit = (item: any) => {
+    setEditingItem(item);
+    setEditName(item.materialName);
+    setEditMinStock(item.minStock);
+    setEditUnit(item.unit);
+    setEditCurrentStock(item.currentStock);
+  };
+
+  const handleDeleteItem = (id: string) => {
+    deleteInventoryItem(id);
+    if (selectedMaterialId === id) {
+      setSelectedMaterialId("");
+      setActiveQRCodeData(null);
+    }
+    setDeletingId(null);
+  };
+
+  const handleExportLedgerPDF = () => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const marginX = 15;
+    let currentY = 20;
+
+    // Header banner with deep corporate dark slate
+    doc.setFillColor(15, 23, 42); // slate-900/950
+    doc.rect(0, 0, 210, 38, "F");
+
+    // Title / Company Brand
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text("PT FORESYNDO CONTRACTOR GROUP", marginX, 15);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Gudang Logistik & Sediaan Konstruksi Lapangan", marginX, 21);
+    doc.text("E-mail: logistik@foresyndo.com | Telp: +62 21-8888-888", marginX, 26);
+
+    // Document Name in Header
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("JURNAL MUTASI BARANG & JASA", 130, 15);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text(`Dicetak: ${new Date().toLocaleString()}`, 130, 21);
+    doc.text(`Total Baris: ${mutations.length}`, 130, 26);
+
+    currentY = 48;
+
+    // Table Header
+    doc.setFillColor(241, 245, 249); // slate-100
+    doc.rect(marginX, currentY, 180, 8, "F");
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(51, 65, 85); // slate-700
+    
+    doc.text("Tanggal", marginX + 3, currentY + 5.5);
+    doc.text("Nama Material", marginX + 25, currentY + 5.5);
+    doc.text("Ref QR Code", marginX + 85, currentY + 5.5);
+    doc.text("Tipe", marginX + 125, currentY + 5.5);
+    doc.text("Qty", marginX + 145, currentY + 5.5);
+    doc.text("Keterangan", marginX + 160, currentY + 5.5);
+
+    currentY += 8;
+
+    // Table Rows
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+
+    const filtered = mutations.filter(m => {
+      const matchSearch = m.materialName.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+                          (m.notes && m.notes.toLowerCase().includes(ledgerSearch.toLowerCase())) ||
+                          m.qrCode.toLowerCase().includes(ledgerSearch.toLowerCase());
+      const matchType = ledgerType === "ALL" || m.type === ledgerType;
+      return matchSearch && matchType;
+    });
+
+    if (filtered.length === 0) {
+      doc.text("Belum ada catatan mutasi logistik barang atau jasa.", marginX + 5, currentY + 10);
+    } else {
+      filtered.forEach((m, index) => {
+        if (currentY > 270) {
+          doc.addPage();
+          currentY = 20;
+          // Re-draw header on new page
+          doc.setFillColor(241, 245, 249);
+          doc.rect(marginX, currentY, 180, 8, "F");
+          doc.setFont("Helvetica", "bold");
+          doc.text("Tanggal", marginX + 3, currentY + 5.5);
+          doc.text("Nama Material", marginX + 25, currentY + 5.5);
+          doc.text("Ref QR Code", marginX + 85, currentY + 5.5);
+          doc.text("Tipe", marginX + 125, currentY + 5.5);
+          doc.text("Qty", marginX + 145, currentY + 5.5);
+          doc.text("Keterangan", marginX + 160, currentY + 5.5);
+          currentY += 8;
+          doc.setFont("Helvetica", "normal");
+        }
+
+        // Draw light line beneath row
+        doc.setDrawColor(241, 245, 249);
+        doc.line(marginX, currentY, marginX + 180, currentY);
+
+        doc.text(m.date, marginX + 3, currentY + 6.5);
+        
+        let name = m.materialName;
+        if (name.length > 30) name = name.substring(0, 28) + "...";
+        doc.text(name, marginX + 25, currentY + 6.5);
+        
+        doc.text(m.qrCode, marginX + 85, currentY + 6.5);
+        
+        const typeStr = m.type === "masuk" ? "MASUK" : "KELUAR";
+        doc.text(typeStr, marginX + 125, currentY + 6.5);
+        
+        doc.text(String(m.qty), marginX + 145, currentY + 6.5);
+        
+        let note = m.notes || "-";
+        if (note.length > 20) note = note.substring(0, 18) + "...";
+        doc.text(note, marginX + 160, currentY + 6.5);
+
+        currentY += 9;
+      });
+    }
+
+    doc.save(`Jurnal_Mutasi_Gudang_${new Date().toISOString().split("T")[0]}.pdf`);
+  };
+
+  const filteredInventory = inventory.filter(item => {
+    return item.materialName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+           item.id.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
   return (
     <div id="logistic-qr-module" className="space-y-6">
       
@@ -226,34 +425,234 @@ export const InventoryBarcode: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        
-        {/* PANEL 1: INVENTORY STOCKS INDEX (COL-SPAN 4) */}
+               {/* PANEL 1: INVENTORY STOCKS INDEX (COL-SPAN 4) */}
         <div className="xl:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <h3 className="text-xs font-black text-slate-405 dark:text-slate-405 uppercase tracking-wider flex items-center gap-1.5 font-mono">
               <Sliders className="w-4 h-4 text-slate-500" />
               Sediaan Stok Terdaftar
             </h3>
-            <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-505 dark:text-slate-400 px-2 py-0.5 rounded font-mono font-bold">
-              {inventory.length} Jenis
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] bg-slate-100 dark:bg-slate-850 text-slate-505 dark:text-slate-400 px-2 py-0.5 rounded font-mono font-bold">
+                {inventory.length} Jenis
+              </span>
+              <button
+                type="button"
+                onClick={() => { setShowAddForm(!showAddForm); setEditingItem(null); }}
+                className="p-1 px-2.5 rounded-lg text-[10px] font-bold text-white bg-amber-500 hover:bg-amber-600 transition flex items-center gap-1 cursor-pointer shadow-sm"
+              >
+                {showAddForm ? <X className="w-3" /> : <Plus className="w-3" />}
+                <span>{showAddForm ? 'Batal' : 'Tambah'}</span>
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3 max-h-[580px] overflow-y-auto pr-1">
-            {inventory.length === 0 ? (
+          {/* Search bar before list */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari nama material / ID..."
+              className="w-full pl-8.5 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+          </div>
+
+          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+            {/* Inline Add Form */}
+            {showAddForm && (
+              <form onSubmit={handleAddMaterialSubmit} className="p-3.5 bg-amber-50/20 dark:bg-amber-950/10 border border-amber-500/20 rounded-xl space-y-3 text-left animate-in fade-in zoom-in-95 duration-100">
+                <div className="flex justify-between items-center border-b border-amber-500/15 pb-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-500 animate-spin" />
+                    Tambah Material Baru
+                  </span>
+                  <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Nama Material</label>
+                    <input
+                      type="text"
+                      required
+                      value={addName}
+                      onChange={(e) => setAddName(e.target.value)}
+                      placeholder="cth: Semen Grobogan 50kg"
+                      className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Satuan</label>
+                      <input
+                        type="text"
+                        required
+                        value={addUnit}
+                        onChange={(e) => setAddUnit(e.target.value)}
+                        placeholder="cth: Sak, Kg, Pcs, M3"
+                        className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Batas Minimum</label>
+                      <input
+                        type="number"
+                        min="0"
+                        required
+                        value={addMinStock}
+                        onChange={(e) => setAddMinStock(Number(e.target.value))}
+                        className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Stok Awal Masuk</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={addInitialStock}
+                      onChange={(e) => setAddInitialStock(Number(e.target.value))}
+                      className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow transition font-mono uppercase tracking-wider"
+                  >
+                    Simpan & Daftarkan QR
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Inline Edit Form */}
+            {editingItem && (
+              <form onSubmit={handleEditMaterialSubmit} className="p-3.5 bg-blue-50/25 dark:bg-blue-950/10 border border-blue-500/20 rounded-xl space-y-3 text-left">
+                <div className="flex justify-between items-center border-b border-blue-500/15 pb-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400 font-mono">
+                    Edit Detail Material ({editingItem.id})
+                  </span>
+                  <button type="button" onClick={() => setEditingItem(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="space-y-2.5 font-mono">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Nama Material</label>
+                    <input
+                      type="text"
+                      required
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none font-mono"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Satuan</label>
+                      <input
+                        type="text"
+                        required
+                        value={editUnit}
+                        onChange={(e) => setEditUnit(e.target.value)}
+                        className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Batas Minimum</label>
+                      <input
+                        type="number"
+                        min="0"
+                        required
+                        value={editMinStock}
+                        onChange={(e) => setEditMinStock(Number(e.target.value))}
+                        className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Stok Fisik Saat Ini</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={editCurrentStock}
+                      onChange={(e) => setEditCurrentStock(Number(e.target.value))}
+                      className="w-full p-2 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-1 font-sans">
+                    <button
+                      type="button"
+                      onClick={() => setEditingItem(null)}
+                      className="py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 font-bold text-[10px] rounded-lg transition"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      className="py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition shadow-sm"
+                    >
+                      Simpan
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {filteredInventory.length === 0 ? (
               <div className="text-center py-12 text-slate-450 dark:text-slate-600 space-y-2">
                 <Package className="w-12 h-12 mx-auto stroke-1" />
-                <p className="text-xs">Belum ada material yang terdaftar dalam proyek ini.</p>
+                <p className="text-xs">Tidak ada material yang cocok dengan pencarian.</p>
               </div>
             ) : (
-              inventory.map((item) => {
+              filteredInventory.map((item) => {
                 const isUnderMinStock = item.currentStock < item.minStock;
                 const isSelected = selectedMaterialId === item.id;
+                const isDeleting = deletingId === item.id;
+
+                if (isDeleting) {
+                  return (
+                    <div 
+                      key={item.id} 
+                      className="p-3.5 bg-rose-50/50 dark:bg-rose-955/20 border border-rose-300 dark:border-rose-800 rounded-xl flex flex-col gap-2 font-mono text-left"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-[10px] font-black uppercase">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 animate-bounce" />
+                        <span>Hapus Material dari Sistem?</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 leading-snug">
+                        Item <b>{item.materialName}</b> akan dihapuskan dari buku besar digital gudang.
+                      </p>
+                      <div className="flex gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteItem(item.id)}
+                          className="px-2.5 py-1 text-[9px] bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition"
+                        >
+                          Ya, Hapus
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingId(null)}
+                          className="px-2.5 py-1 text-[9px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-lg transition"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
                 
                 return (
                   <div 
                     key={item.id} 
-                    onClick={() => handleMaterialSelect(item.id)}
+                    onClick={() => setSelectedMaterialId(item.id)}
                     className={`p-3.5 rounded-xl border transition-all duration-150 cursor-pointer text-left relative overflow-hidden group ${
                       isSelected 
                         ? "bg-slate-50 dark:bg-slate-850/60 border-amber-500/80 ring-1 ring-amber-500/50" 
@@ -267,42 +666,98 @@ export const InventoryBarcode: React.FC = () => {
 
                     <div className="flex justify-between items-start pl-1">
                       <div className="space-y-1">
-                        <span className="text-xs font-extrabold text-slate-800 dark:text-white block group-hover:text-amber-500 transition-colors">
-                          {item.materialName}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-extrabold text-slate-800 dark:text-white block group-hover:text-amber-500 transition-colors">
+                            {item.materialName}
+                          </span>
+                        </div>
                         <div className="flex flex-wrap items-center gap-1 text-[9.5px] text-slate-400 font-mono">
                           <span>Min: <b className="text-slate-600 dark:text-slate-300 font-bold">{item.minStock}</b> {item.unit}</span>
                           <span>•</span>
-                          <span className="uppercase font-bold tracking-tighter text-indigo-500 font-mono">ID: {item.id}</span>
+                          <span className="uppercase font-bold tracking-tighter text-indigo-505 dark:text-indigo-455 font-mono">ID: {item.id}</span>
                         </div>
                       </div>
 
-                      <div className="text-right">
+                      <div className="text-right flex flex-col items-end">
                         <span className={`text-xs font-black font-mono block ${isUnderMinStock ? "text-rose-600 dark:text-rose-400 animate-pulse" : "text-slate-800 dark:text-slate-100"}`}>
                           {item.currentStock} {item.unit}
                         </span>
-                        {isUnderMinStock && (
+                        {isUnderMinStock ? (
                           <span className="text-[8px] bg-rose-500 dark:bg-rose-600 text-white font-mono font-bold tracking-wider px-1 rounded uppercase inline-block mt-0.5">
                             LOW STOCK
                           </span>
+                        ) : (
+                          /* Quick management icons */
+                          <div className="flex items-center gap-1.5 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartEdit(item);
+                              }}
+                              className="p-0.5 text-slate-400 hover:text-blue-550 dark:hover:text-blue-405 transition"
+                              title="Edit Material"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingId(item.id);
+                              }}
+                              className="p-0.5 text-slate-400 hover:text-rose-500 transition"
+                              title="Hapus Material"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
 
                     {/* Footer interactive option to fast-trigger Simulated hardware scan */}
                     <div className="mt-3.5 pt-2 border-t border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between text-[10px] pl-1 font-mono">
-                      <button 
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerInstantScan(item.id);
-                        }}
-                        className="text-amber-600 hover:text-amber-500 dark:text-amber-400 dark:hover:text-amber-300 font-bold flex items-center gap-1 hover:underline cursor-pointer"
-                        title="Simulasikan Scan Label Tempel"
-                      >
-                        <ScanLine className="w-3.5 h-3.5 text-amber-500" />
-                        Pindai Barcode (Scan)
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triggerInstantScan(item.id);
+                          }}
+                          className="text-amber-600 hover:text-amber-500 dark:text-amber-400 dark:hover:text-amber-300 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                          title="Simulasikan Scan Label Tempel"
+                        >
+                          <ScanLine className="w-3.5 h-3.5 text-amber-500" />
+                          Pindai Barcode (Scan)
+                        </button>
+                        
+                        {/* Always visible edit/delete icons for touch/mobile devices where hover doesnt exist */}
+                        <div className="flex items-center gap-2.5 ml-2 border-l border-slate-200 dark:border-slate-800 pl-2 lg:hidden">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartEdit(item);
+                            }}
+                            className="text-slate-400 hover:text-blue-550"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingId(item.id);
+                            }}
+                            className="text-slate-400 hover:text-rose-550"
+                            title="Hapus"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
 
                       {/* Display mini thumbnail of actual generated QR */}
                       {qrCodeUrls[item.id] ? (
@@ -578,6 +1033,141 @@ export const InventoryBarcode: React.FC = () => {
             </div>
           )}
 
+        </div>
+
+      </div>
+
+      {/* FULL-WIDTH LOGISTICS & MUTATION JURNAL BARANG */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-5">
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2 font-mono">
+              <ClipboardList className="w-5 h-5 text-amber-500" />
+              Buku Besar & Jurnal Mutasi Logistik Lapangan
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Arsip transaksi fisik barang masuk/keluar terverifikasi sistem label QR Pintar Foresyndo.
+            </p>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Filter by Type Tabs */}
+            <div className="flex bg-slate-50 dark:bg-slate-850 p-1 rounded-xl border border-slate-150 dark:border-slate-800 text-[10.5px] font-mono leading-none">
+              <button
+                type="button"
+                onClick={() => setLedgerType("ALL")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition ${ledgerType === "ALL" ? "bg-amber-500 text-white shadow-sm" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
+              >
+                Semua
+              </button>
+              <button
+                type="button"
+                onClick={() => setLedgerType("masuk")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1 ${ledgerType === "masuk" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-500 hover:text-emerald-500"}`}
+              >
+                <ArrowDownLeft className="w-3 h-3" />
+                Masuk
+              </button>
+              <button
+                type="button"
+                onClick={() => setLedgerType("keluar")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1 ${ledgerType === "keluar" ? "bg-rose-600 text-white shadow-sm" : "text-slate-500 hover:text-rose-500"}`}
+              >
+                <ArrowUpRight className="w-3 h-3" />
+                Keluar
+              </button>
+            </div>
+
+            {/* Filter Search */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={ledgerSearch}
+                onChange={(e) => setLedgerSearch(e.target.value)}
+                placeholder="Cari kode QR, material..."
+                className="pl-8.5 pr-3 py-2 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500 w-[200px]"
+              />
+            </div>
+
+            {/* Export PDF Button */}
+            <button
+              type="button"
+              onClick={handleExportLedgerPDF}
+              className="py-2 px-3.5 bg-slate-900 hover:bg-slate-850 dark:bg-slate-800 dark:hover:bg-slate-755 text-white font-bold text-xs rounded-xl shadow transition flex items-center gap-1.5 font-mono cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-400" />
+              Ekspor Jurnal PDF
+            </button>
+          </div>
+        </div>
+
+        {/* Mutation List / Spreadsheet Table */}
+        <div className="overflow-x-auto border border-slate-100 dark:border-slate-800 rounded-xl">
+          <table className="w-full text-left font-mono text-[11px] border-collapse bg-slate-50/20 dark:bg-slate-950/20">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-850 border-b border-slate-150 dark:border-slate-800 text-slate-505 dark:text-slate-400 font-bold uppercase tracking-wider">
+                <th className="py-3 px-4">Tanggal</th>
+                <th className="py-3 px-4">Referensi QR Code</th>
+                <th className="py-3 px-4">Nama Material</th>
+                <th className="py-3 px-4 text-center">Tipe Mutasi</th>
+                <th className="py-3 px-4 text-right">Kuantitas</th>
+                <th className="py-3 px-4">Catatan / Keterangan</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-705 dark:text-slate-300">
+              {mutations.filter(m => {
+                const matchSearch = m.materialName.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+                                    (m.notes && m.notes.toLowerCase().includes(ledgerSearch.toLowerCase())) ||
+                                    m.qrCode.toLowerCase().includes(ledgerSearch.toLowerCase());
+                const matchType = ledgerType === "ALL" || m.type === ledgerType;
+                return matchSearch && matchType;
+              }).length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-slate-400 text-xs">
+                    <History className="w-8 h-8 mx-auto stroke-1 text-slate-300 mb-1" />
+                    Belum ada arsip mutasi sediaan terdaftar yang cocok dengan filter.
+                  </td>
+                </tr>
+              ) : (
+                mutations.filter(m => {
+                  const matchSearch = m.materialName.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+                                      (m.notes && m.notes.toLowerCase().includes(ledgerSearch.toLowerCase())) ||
+                                      m.qrCode.toLowerCase().includes(ledgerSearch.toLowerCase());
+                  const matchType = ledgerType === "ALL" || m.type === ledgerType;
+                  return matchSearch && matchType;
+                }).map((m) => {
+                  const isMasuk = m.type === "masuk";
+                  return (
+                    <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/20 transition-colors">
+                      <td className="py-2.5 px-4 font-bold text-slate-400 whitespace-nowrap">{m.date}</td>
+                      <td className="py-2.5 px-4">
+                        <span className="bg-slate-100 dark:bg-slate-800 text-slate-505 px-2 py-0.5 rounded font-bold text-[10px] select-all">
+                          {m.qrCode}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 font-extrabold text-slate-800 dark:text-white">{m.materialName}</td>
+                      <td className="py-2.5 px-4 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9.5px] font-black ${
+                          isMasuk 
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" 
+                            : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                        }`}>
+                          {isMasuk ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
+                          {isMasuk ? "MASUK" : "KELUAR"}
+                        </span>
+                      </td>
+                      <td className={`py-2.5 px-4 text-right font-black text-xs ${isMasuk ? "text-emerald-600 dark:text-emerald-450" : "text-rose-600 dark:text-rose-450"}`}>
+                        {isMasuk ? "+" : "-"}{m.qty}
+                      </td>
+                      <td className="py-2.5 px-4 text-xs max-w-[200px] truncate" title={m.notes}>{m.notes || "-"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
 
       </div>

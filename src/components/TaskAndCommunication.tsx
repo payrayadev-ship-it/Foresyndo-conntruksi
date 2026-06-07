@@ -10,8 +10,15 @@ import { jsPDF } from "jspdf";
 
 export function TaskAndCommunication() {
   const { 
-    currentUser, tasks, messages, projects, addTask, updateTaskStatus, deleteTask, addDivisionalMessage 
+    currentUser, tasks, messages, projects, addTask, updateTaskStatus, deleteTask, addDivisionalMessage,
+    addSubTask, toggleSubTask, deleteSubTask, staff
   } = useProject();
+
+  // Sub-task states keyed by taskId
+  const [subTaskTitles, setSubTaskTitles] = useState<Record<string, string>>({});
+  const [subTaskRoles, setSubTaskRoles] = useState<Record<string, UserRole>>({});
+  const [subTaskAssignees, setSubTaskAssignees] = useState<Record<string, string>>({});
+  const [showAddSubTaskForm, setShowAddSubTaskForm] = useState<Record<string, boolean>>({});
 
   // Task Filter and Sorting states
   const [taskFilter, setTaskFilter] = useState<UserRole | "ALL">("ALL");
@@ -725,6 +732,203 @@ export function TaskAndCommunication() {
                     <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 dark:bg-slate-950 p-2.5 rounded border border-slate-150 dark:border-slate-850">
                       {task.description}
                     </p>
+
+                    {/* Progress Bar & Sub-tugas list */}
+                    {(() => {
+                      const totalSub = task.subTasks?.length || 0;
+                      const completedSub = task.subTasks?.filter(st => st.isCompleted).length || 0;
+                      const progressPercent = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
+                      const isManager = activeUserRole === UserRole.PROJECT_MANAGER || activeUserRole === UserRole.DIREKTUR || task.creatorRole === activeUserRole;
+
+                      return (
+                        <div className="space-y-3.5 border-t border-b border-dashed border-slate-200 dark:border-slate-800 py-3 mt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black font-mono uppercase text-slate-400 tracking-wider">Sub-Tugas &amp; Delegasi Lapangan</span>
+                            <span className="text-[10.5px] font-extrabold text-blue-600 dark:text-blue-400 font-mono">
+                              {completedSub}/{totalSub} Selesai ({progressPercent}%)
+                            </span>
+                          </div>
+
+                          {/* Progress bar per sub-tugas */}
+                          <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-200/40 dark:border-slate-755">
+                            <div 
+                              className="bg-emerald-500 dark:bg-emerald-400 h-2 rounded-full transition-all duration-300"
+                              style={{ width: `${progressPercent}%` }}
+                            />
+                          </div>
+
+                          {/* Detail of Sub-Tasks */}
+                          {totalSub === 0 ? (
+                            <p className="text-[10.5px] italic text-slate-400">Belum ada sub-tugas delegasi khusus divisi.</p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5">
+                              {task.subTasks?.map((st) => {
+                                // User can complete if they are manager or if role of sub-task matches currentUser role
+                                const canToggleSub = isManager || st.role === activeUserRole;
+                                
+                                return (
+                                  <div 
+                                    key={st.id} 
+                                    className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-150 dark:border-slate-850 hover:bg-slate-100/50 dark:hover:bg-slate-900/50 transition gap-2 text-left"
+                                  >
+                                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                      <button
+                                        type="button"
+                                        disabled={!canToggleSub}
+                                        onClick={() => toggleSubTask(task.id, st.id)}
+                                        className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition ${
+                                          st.isCompleted 
+                                            ? "bg-emerald-500 border-emerald-600 text-white cursor-pointer" 
+                                            : canToggleSub 
+                                              ? "border-slate-350 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-blue-500 cursor-pointer"
+                                              : "border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 cursor-not-allowed opacity-60"
+                                        }`}
+                                        title={canToggleSub ? "Klik untuk mengubah status" : `Hanya untuk peran ${st.role} atau Manajer`}
+                                      >
+                                        {st.isCompleted && <Check className="w-3 h-3 stroke-[3]" />}
+                                      </button>
+                                      <div className="min-w-0 flex-1">
+                                        <span className={`text-[11px] leading-tight font-medium block ${st.isCompleted ? "line-through text-slate-400 dark:text-slate-500" : "text-slate-750 dark:text-slate-200"}`}>
+                                          {st.title}
+                                        </span>
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[9px] text-slate-400 font-mono">
+                                          <span>Penerima:</span>
+                                          <span className="font-extrabold text-slate-600 dark:text-slate-300">{st.assignedToName}</span>
+                                          <span>•</span>
+                                          <span className="bg-slate-100 dark:bg-slate-900 px-1 py-[0.5px] rounded border border-slate-250 dark:border-slate-800 font-extrabold text-[8.5px]">
+                                            {st.role}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    
+                                    {isManager && (
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteSubTask(task.id, st.id)}
+                                        className="text-slate-400 hover:text-rose-500 p-1 rounded transition cursor-pointer"
+                                        title="Hapus Sub-tugas ini"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Form Tambah Sub-tugas khusus Manajer */}
+                          {isManager && (
+                            <div className="pt-2">
+                              {!showAddSubTaskForm[task.id] ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowAddSubTaskForm(prev => ({ ...prev, [task.id]: true }))}
+                                  className="flex items-center gap-1 text-[10px] font-black uppercase text-blue-600 dark:text-blue-400 hover:underline transition focus:outline-none"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>+ Tambah Delegasi Sub-Tugas</span>
+                                </button>
+                              ) : (
+                                <div className="p-3 bg-blue-50/10 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 rounded-lg space-y-2.5 shadow-sm animate-fade-in text-xs text-left">
+                                  <div className="flex justify-between items-center pb-1 border-b border-slate-250 dark:border-slate-850">
+                                    <span className="text-[9px] font-black font-mono uppercase text-blue-600 dark:text-blue-400">Delegasikan Sub-tugas Baru</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowAddSubTaskForm(prev => ({ ...prev, [task.id]: false }))}
+                                      className="text-[10px] font-bold text-slate-400 hover:text-rose-500"
+                                    >
+                                      Batal
+                                    </button>
+                                  </div>
+                                  
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                      <label className="text-[9px] font-bold text-slate-450 uppercase tracking-wider">Nama Sub-tugas</label>
+                                      <input
+                                        type="text"
+                                        required
+                                        placeholder="Contoh: Periksa kemiringan bekisting..."
+                                        value={subTaskTitles[task.id] || ""}
+                                        onChange={(e) => setSubTaskTitles(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                        className="w-full text-[11px] p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
+                                      />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <label className="text-[9px] font-bold text-slate-450 uppercase tracking-wider">Peran Anggota</label>
+                                      <select
+                                        value={subTaskRoles[task.id] || UserRole.SITE_ENGINEER}
+                                        onChange={(e) => setSubTaskRoles(prev => ({ ...prev, [task.id]: e.target.value as UserRole }))}
+                                        className="w-full text-[11px] p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
+                                      >
+                                        {Object.values(UserRole).map(r => (
+                                          <option key={r} value={r}>{r}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
+                                    <div className="space-y-1">
+                                      <label className="text-[9px] font-bold text-slate-455 uppercase tracking-wider">Pilih Anggota Tim</label>
+                                      <select
+                                        value={subTaskAssignees[task.id] || ""}
+                                        onChange={(e) => setSubTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                        className="w-full text-[11px] p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
+                                      >
+                                        <option value="">-- Hubungkan Dari Staff --</option>
+                                        {staff.map(s => (
+                                          <option key={s.id} value={s.name}>{s.name} ({s.role})</option>
+                                        ))}
+                                        <option value="custom_input">Ketik Nama Manual...</option>
+                                      </select>
+                                    </div>
+
+                                    {/* Manual input if custom_input is chosen */}
+                                    {(subTaskAssignees[task.id] === "custom_input" || !subTaskAssignees[task.id]) && (
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] font-bold text-slate-460 uppercase tracking-wider">Ketik Nama Penerima</label>
+                                        <input
+                                          type="text"
+                                          placeholder="Ketik nama manual..."
+                                          className="w-full text-[11px] p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-white"
+                                          onChange={(e) => setSubTaskAssignees(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const title = subTaskTitles[task.id]?.trim();
+                                      let assignee = subTaskAssignees[task.id];
+                                      if (assignee === "custom_input") assignee = "";
+                                      const role = subTaskRoles[task.id] || UserRole.SITE_ENGINEER;
+
+                                      if (!title) return;
+
+                                      addSubTask(task.id, title, assignee || "Anggota Tim", role);
+
+                                      // reset state
+                                      setSubTaskTitles(prev => ({ ...prev, [task.id]: "" }));
+                                      setSubTaskAssignees(prev => ({ ...prev, [task.id]: "" }));
+                                      setSubTaskRoles(prev => ({ ...prev, [task.id]: UserRole.SITE_ENGINEER }));
+                                      setShowAddSubTaskForm(prev => ({ ...prev, [task.id]: false }));
+                                    }}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[10.5px] py-2 rounded-md shadow-sm transition cursor-pointer"
+                                  >
+                                    Delegasikan Sub-Tugas
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Completion notes / technical evaluation */}
                     {task.notes && (

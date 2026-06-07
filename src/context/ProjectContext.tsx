@@ -12,7 +12,7 @@ import {
 } from "../mockData";
 import { auth, db, googleProvider } from "../firebase";
 import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, collection, addDoc, getDocs, query, where } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, collection, addDoc, getDocs, query, where, deleteDoc } from "firebase/firestore";
 
 interface ProjectContextType {
   currentUser: UserProfile | null;
@@ -67,6 +67,9 @@ interface ProjectContextType {
   updatePOStatus: (id: string, status: "Draft" | "Approved" | "Ordered" | "Delivered") => void;
   adjustInventory: (materialName: string, amount: number) => void;
   addMaterialMutation: (mut: Omit<MaterialMutation, "id" | "projectId">) => void;
+  addInventoryItem: (item: Omit<MaterialInventory, "id" | "projectId" | "lastUpdated">) => void;
+  updateInventoryItem: (item: MaterialInventory) => void;
+  deleteInventoryItem: (id: string) => void;
   addSDMStaff: (st: Omit<SDMStaff, "id" | "projectId">) => void;
   toggleAttendance: (staffId: string) => void;
   addQCItem: (qc: Omit<QualityControlItem, "id" | "projectId">) => void;
@@ -84,9 +87,59 @@ interface ProjectContextType {
   updateTaskStatus: (id: string, status: Task["status"], notes?: string) => void;
   deleteTask: (id: string) => void;
   addDivisionalMessage: (targetRole: UserRole | "Semua", text: string) => void;
+  addSubTask: (taskId: string, title: string, assignedToName: string, role: UserRole) => void;
+  toggleSubTask: (taskId: string, subTaskId: string) => void;
+  deleteSubTask: (taskId: string, subTaskId: string) => void;
   
   // AI Tools trigger
   runAIAnalysis: (type: "delay_analysis" | "cashflow_prediction" | "risk_assessment" | "minutes_generator" | "report_generator", extraPayload?: any) => Promise<{ text: string; isMocked: boolean; message?: string }>;
+}
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -102,7 +155,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     companyAddress: "Jl. Jenderal Sudirman No. 88, Jakarta Selatan",
     companyEmail: "info@foresyndo.com",
     companyPhone: "+62 21-8888-888",
-    logoUrl: "",
+    logoUrl: "/src/assets/images/fgi_logo_1780821983844.png",
     adminUsername: "admin",
     adminPassword: "Password123"
   };
@@ -111,7 +164,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const saved = localStorage.getItem("fos_portal_settings");
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (!parsed.logoUrl || parsed.logoUrl === "") {
+          parsed.logoUrl = "/src/assets/images/fgi_logo_1780821983844.png";
+        }
+        return parsed;
       } catch (e) {
         return defaultPortalSettings;
       }
@@ -127,6 +184,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data() as PortalSettings;
+          if (!data.logoUrl || data.logoUrl === "") {
+            data.logoUrl = "/src/assets/images/fgi_logo_1780821983844.png";
+          }
           setPortalSettings(data);
           localStorage.setItem("fos_portal_settings", JSON.stringify(data));
           if (data.companyName) {
@@ -398,6 +458,339 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => unsubscribe();
   }, []);
 
+  // Helper to seed Firestore if empty
+  const seedDefaultDataToFirestore = async () => {
+    try {
+      console.log("Seeding initial data into Firestore...");
+      for (const p of initialProjects) {
+        const pid = p.projectId;
+        await setDoc(doc(db, "projects", pid), p);
+
+        // Seed RAB
+        const rabs = initialRABItems[pid] || [];
+        for (const item of rabs) {
+          await setDoc(doc(db, "projects", pid, "rab", item.id), item);
+        }
+
+        // Seed Gantt Tasks
+        const gtTasks = initialGanttTasks[pid] || [];
+        for (const t of gtTasks) {
+          await setDoc(doc(db, "projects", pid, "gantt_tasks", t.id), t);
+        }
+
+        // Seed Transactions
+        const txs = initialTransactions[pid] || [];
+        for (const tx of txs) {
+          await setDoc(doc(db, "projects", pid, "transactions", tx.id), tx);
+        }
+
+        // Seed Purchase Orders
+        const pos = initialPurchaseOrders[pid] || [];
+        for (const po of pos) {
+          await setDoc(doc(db, "projects", pid, "purchase_orders", po.id), po);
+        }
+
+        // Seed Inventory
+        const invs = initialInventory[pid] || [];
+        for (const inv of invs) {
+          await setDoc(doc(db, "projects", pid, "inventory", inv.id), inv);
+        }
+
+        // Seed Staff
+        const staffs = initialStaff[pid] || [];
+        for (const st of staffs) {
+          await setDoc(doc(db, "projects", pid, "sdm_staff", st.id), st);
+        }
+
+        // Seed QC Items
+        const qcs = initialQC[pid] || [];
+        for (const qc of qcs) {
+          await setDoc(doc(db, "projects", pid, "quality_control", qc.id), qc);
+        }
+
+        // Seed Safety
+        const safeties = initialSafety[pid] || [];
+        for (const sf of safeties) {
+          await setDoc(doc(db, "projects", pid, "safety_k3", sf.id), sf);
+        }
+
+        // Seed Documents
+        const docsArr = initialDocuments[pid] || [];
+        for (const d of docsArr) {
+          await setDoc(doc(db, "projects", pid, "documents", d.id), d);
+        }
+
+        // Seed Daily Reports
+        const dailies = initialDailyReports[pid] || [];
+        for (const d of dailies) {
+          await setDoc(doc(db, "projects", pid, "daily_reports", d.id), d);
+        }
+
+        // Seed Progress Reports
+        const progresses = [
+          { id: "pr-01", projectId: pid, tanggal: "2026-05-15", itemPekerjaan: "Struktur Balok & Kolom Lantai 1", volumeRealisasi: 100, persentaseProgress: 35 },
+          { id: "pr-02", projectId: pid, tanggal: "2026-06-01", itemPekerjaan: "Struktur Plat & Balok Lantai 2", volumeRealisasi: 40, persentaseProgress: 10.2 }
+        ];
+        if (pid === "proj-001") {
+          for (const pr of progresses) {
+            await setDoc(doc(db, "projects", pid, "progress_reports", pr.id), pr);
+          }
+        }
+
+        // Seed Tasks
+        const defaultTasks = [
+          {
+            id: "task-01",
+            projectId: pid,
+            title: "Verifikasi Mutasi Semen Portland",
+            description: "Lakukan audit dan sinkronisasi stok semen pc 50kg di gudang utama logistik.",
+            assignedRole: UserRole.QC_ENGINEER,
+            status: "Dalam Proses",
+            dueDate: "2026-06-10",
+            creatorName: "Hermawan (PM)",
+            creatorRole: UserRole.PROJECT_MANAGER,
+            priority: "High",
+            notes: "Sesuai laporan RFI #002."
+          },
+          {
+            id: "task-02",
+            projectId: pid,
+            title: "Persetujuan RAB Addendum Balok Utama",
+            description: "Evaluasi pengajuan addendum biaya tambahan baja tulangan d22 lantai 3.",
+            assignedRole: UserRole.DIREKTUR,
+            status: "Belum Mulai",
+            dueDate: "2026-06-08",
+            creatorName: "Hermawan (PM)",
+            creatorRole: UserRole.PROJECT_MANAGER,
+            priority: "Medium"
+          },
+          {
+            id: "task-03",
+            projectId: pid,
+            title: "Induksi K3 & Evaluasi Pengaman Tepi",
+            description: "Sosialisasi toolbox meeting tentang penggunaan safety harness di ketinggian > 2 meter.",
+            assignedRole: UserRole.SAFETY_OFFICER,
+            status: "Selesai",
+            dueDate: "2026-06-06",
+            creatorName: "Hermawan (PM)",
+            creatorRole: UserRole.PROJECT_MANAGER,
+            priority: "Low",
+            notes: "Telah selesai dilakukan dengan 12 staff lapangan."
+          }
+        ];
+        if (pid === "proj-001") {
+          for (const t of defaultTasks) {
+            await setDoc(doc(db, "projects", pid, "tasks", t.id), t);
+          }
+        }
+
+        // Seed divisional messages
+        const defaultMessages = [
+          {
+            id: "msg-01",
+            projectId: pid,
+            senderName: "Budi Santoso",
+            senderRole: UserRole.PROJECT_MANAGER,
+            targetRole: "Semua",
+            text: "Selamat pagi semua divisi. Mohon pastikan rencana kerja harian di-submit tepat waktu melalui portal.",
+            timestamp: "2026-06-06 08:00"
+          },
+          {
+            id: "msg-02",
+            projectId: pid,
+            senderName: "Anton Wijaya",
+            senderRole: UserRole.SITE_ENGINEER,
+            targetRole: UserRole.QC_ENGINEER,
+            text: "Pak QC, berkas RFI #002 untuk pengecoran plat lantai 2 sudah siap divisualisasi. Mohon bantuannya.",
+            timestamp: "2026-06-06 08:45"
+          },
+          {
+            id: "msg-03",
+            senderName: "Rian Hidayat",
+            senderRole: UserRole.QC_ENGINEER,
+            targetRole: UserRole.SITE_ENGINEER,
+            projectId: pid,
+            text: "Siap pak, jam 10:00 saya akan laksanakan inspeksi lapangan ke lokasi pengecoran.",
+            timestamp: "2026-06-06 09:12"
+          }
+        ];
+        if (pid === "proj-001") {
+          for (const m of defaultMessages) {
+            await setDoc(doc(db, "projects", pid, "divisional_messages", m.id), m);
+          }
+        }
+      }
+      console.log("Firestore seeding done!");
+    } catch (e) {
+      console.error("Failed to seed default data to Firestore:", e);
+    }
+  };
+
+  // Synchronize data from Firestore on Auth Login
+  useEffect(() => {
+    let isMounted = true;
+    const loadAllModulesFromFirestore = async () => {
+      if (!currentUser) return;
+      try {
+        const projectsRef = collection(db, "projects");
+        const projectsSnap = await getDocs(projectsRef);
+        
+        let dbProjects: Project[] = [];
+        projectsSnap.forEach(docSnap => {
+          dbProjects.push(docSnap.data() as Project);
+        });
+
+        if (dbProjects.length === 0) {
+          await seedDefaultDataToFirestore();
+          if (isMounted) {
+            setProjects(initialProjects);
+            setRabAll(initialRABItems);
+            setGanttAll(initialGanttTasks);
+            setTrxAll(initialTransactions);
+            setPoAll(initialPurchaseOrders);
+            setInvAll(initialInventory);
+            setStaffAll(initialStaff);
+            setQcAll(initialQC);
+            setSafetyAll(initialSafety);
+            setDocAll(initialDocuments);
+            setDailyAll(initialDailyReports);
+          }
+          return;
+        }
+
+        const loadedProjects = dbProjects;
+        const rabTemp: Record<string, RABItem[]> = {};
+        const ganttTemp: Record<string, GanttTask[]> = {};
+        const trxTemp: Record<string, FinanceTransaction[]> = {};
+        const poTemp: Record<string, PurchaseOrder[]> = {};
+        const invTemp: Record<string, MaterialInventory[]> = {};
+        const mutationTemp: Record<string, MaterialMutation[]> = {};
+        const staffTemp: Record<string, SDMStaff[]> = {};
+        const qcTemp: Record<string, QualityControlItem[]> = {};
+        const safetyTemp: Record<string, SafetyRecord[]> = {};
+        const docTemp: Record<string, DocumentRecord[]> = {};
+        const dailyTemp: Record<string, DailyReport[]> = {};
+        const progressTemp: Record<string, ProgressReport[]> = {};
+        const tasksTemp: Record<string, Task[]> = {};
+        const messagesTemp: Record<string, DivisionalMessage[]> = {};
+
+        await Promise.all(loadedProjects.map(async (project) => {
+          const pid = project.projectId;
+          
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "rab"));
+            rabTemp[pid] = [];
+            subSnap.forEach(s => rabTemp[pid].push(s.data() as RABItem));
+          } catch(e) { console.warn("Load error on RAB for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "gantt_tasks"));
+            ganttTemp[pid] = [];
+            subSnap.forEach(s => ganttTemp[pid].push(s.data() as GanttTask));
+          } catch(e) { console.warn("Load error on Gantt Tasks for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "transactions"));
+            trxTemp[pid] = [];
+            subSnap.forEach(s => trxTemp[pid].push(s.data() as FinanceTransaction));
+          } catch(e) { console.warn("Load error on Transactions for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "purchase_orders"));
+            poTemp[pid] = [];
+            subSnap.forEach(s => poTemp[pid].push(s.data() as PurchaseOrder));
+          } catch(e) { console.warn("Load error on Purchase Orders for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "inventory"));
+            invTemp[pid] = [];
+            subSnap.forEach(s => invTemp[pid].push(s.data() as MaterialInventory));
+          } catch(e) { console.warn("Load error on Inventory for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "mutations"));
+            mutationTemp[pid] = [];
+            subSnap.forEach(s => mutationTemp[pid].push(s.data() as MaterialMutation));
+          } catch(e) { console.warn("Load error on Mutations for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "sdm_staff"));
+            staffTemp[pid] = [];
+            subSnap.forEach(s => staffTemp[pid].push(s.data() as SDMStaff));
+          } catch(e) { console.warn("Load error on SDM Staff for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "quality_control"));
+            qcTemp[pid] = [];
+            subSnap.forEach(s => qcTemp[pid].push(s.data() as QualityControlItem));
+          } catch(e) { console.warn("Load error on Quality Control for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "safety_k3"));
+            safetyTemp[pid] = [];
+            subSnap.forEach(s => safetyTemp[pid].push(s.data() as SafetyRecord));
+          } catch(e) { console.warn("Load error on Safety for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "documents"));
+            docTemp[pid] = [];
+            subSnap.forEach(s => docTemp[pid].push(s.data() as DocumentRecord));
+          } catch(e) { console.warn("Load error on Documents for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "daily_reports"));
+            dailyTemp[pid] = [];
+            subSnap.forEach(s => dailyTemp[pid].push(s.data() as DailyReport));
+          } catch(e) { console.warn("Load error on Daily Reports for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "progress_reports"));
+            progressTemp[pid] = [];
+            subSnap.forEach(s => progressTemp[pid].push(s.data() as ProgressReport));
+          } catch(e) { console.warn("Load error on Progress Reports for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "tasks"));
+            tasksTemp[pid] = [];
+            subSnap.forEach(s => tasksTemp[pid].push(s.data() as Task));
+          } catch(e) { console.warn("Load error on Tasks for project", pid, e); }
+
+          try {
+            const subSnap = await getDocs(collection(db, "projects", pid, "divisional_messages"));
+            messagesTemp[pid] = [];
+            subSnap.forEach(s => messagesTemp[pid].push(s.data() as DivisionalMessage));
+          } catch(e) { console.warn("Load error on Divisional Messages for project", pid, e); }
+        }));
+
+        if (isMounted) {
+          setProjects(loadedProjects);
+          setRabAll(rabTemp);
+          setGanttAll(ganttTemp);
+          setTrxAll(trxTemp);
+          setPoAll(poTemp);
+          setInvAll(invTemp);
+          setMutationAll(mutationTemp);
+          setStaffAll(staffTemp);
+          setQcAll(qcTemp);
+          setSafetyAll(safetyTemp);
+          setDocAll(docTemp);
+          setDailyAll(dailyTemp);
+          setProgressAll(progressTemp);
+          setTasksAll(tasksTemp);
+          setMessagesAll(messagesTemp);
+        }
+      } catch (err) {
+        console.warn("Firestore data load error, running with offline synchronization fallback:", err);
+      }
+    };
+
+    loadAllModulesFromFirestore();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser]);
+
   // Save to localStorage on state changes
   useEffect(() => {
     localStorage.setItem("fos_projects", JSON.stringify(projects));
@@ -582,10 +975,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const deleteProject = async (id: string) => {
     setProjects(prev => prev.filter(p => p.projectId !== id));
     logAction("Hapus Proyek", `Menghapus proyek ID: ${id}`);
+    if (currentUser) {
+      try {
+        await deleteDoc(doc(db, "projects", id));
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `projects/${id}`);
+      }
+    }
   };
 
   // RAB Items
-  const addRABItem = (item: Omit<RABItem, "id" | "projectId">) => {
+  const addRABItem = async (item: Omit<RABItem, "id" | "projectId">) => {
     const id = "rab-" + Math.random().toString(36).substr(2, 9);
     const newIt: RABItem = { ...item, id, projectId: activeProjId };
     
@@ -594,18 +994,32 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...currentList, newIt] };
     });
     logAction("Tambah RAB", `Menambahkan item RAB ${item.uraianPekerjaan}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "rab", id), newIt);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/rab/${id}`);
+      }
+    }
   };
 
-  const deleteRABItem = (id: string) => {
+  const deleteRABItem = async (id: string) => {
     setRabAll(prev => {
       const currentList = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: currentList.filter(it => it.id !== id) };
     });
     logAction("Hapus RAB", `Menghapus item RAB ID: ${id}`);
+    if (currentUser) {
+      try {
+        await deleteDoc(doc(db, "projects", activeProjId, "rab", id));
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `projects/${activeProjId}/rab/${id}`);
+      }
+    }
   };
 
   // Gantt Chart Tasks
-  const addGanttTask = (task: Omit<GanttTask, "id" | "projectId">) => {
+  const addGanttTask = async (task: Omit<GanttTask, "id" | "projectId">) => {
     const id = "gt-" + Math.random().toString(36).substr(2, 9);
     const newTask: GanttTask = { ...task, id, projectId: activeProjId };
 
@@ -614,17 +1028,31 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...currentList, newTask] };
     });
     logAction("Tambah Jadwal Pekerjaan", `Menambahkan jadwal ${task.name}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "gantt_tasks", id), newTask);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/gantt_tasks/${id}`);
+      }
+    }
   };
 
-  const updateGanttTask = (task: GanttTask) => {
+  const updateGanttTask = async (task: GanttTask) => {
     setGanttAll(prev => {
       const currentList = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: currentList.map(item => item.id === task.id ? task : item) };
     });
     logAction("Update Jadwal Pekerjaan", `Memperbarui jadwal & penanggung jawab ${task.name}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "gantt_tasks", task.id), task);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/gantt_tasks/${task.id}`);
+      }
+    }
   };
 
-  const deleteGanttTask = (id: string) => {
+  const deleteGanttTask = async (id: string) => {
     setGanttAll(prev => {
       const currentList = prev[activeProjId] || [];
       const itemToDelete = currentList.find(it => it.id === id);
@@ -632,10 +1060,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       logAction("Hapus Jadwal Pekerjaan", `Menghapus jadwal ${name}`);
       return { ...prev, [activeProjId]: currentList.filter(it => it.id !== id) };
     });
+    if (currentUser) {
+      try {
+        await deleteDoc(doc(db, "projects", activeProjId, "gantt_tasks", id));
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `projects/${activeProjId}/gantt_tasks/${id}`);
+      }
+    }
   };
 
   // Transactions
-  const addTransaction = (tx: Omit<FinanceTransaction, "id" | "projectId">) => {
+  const addTransaction = async (tx: Omit<FinanceTransaction, "id" | "projectId">) => {
     const id = "tr-" + Math.random().toString(36).substr(2, 9);
     const newTx: FinanceTransaction = { ...tx, id, projectId: activeProjId };
 
@@ -644,18 +1079,33 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [newTx, ...currentList] };
     });
     logAction("Tambah Transaksi Keuangan", `Menambahkan kas dari kategori ${tx.category} senilai Rp ${tx.amount}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "transactions", id), newTx);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/transactions/${id}`);
+      }
+    }
   };
 
-  const approveTransaction = (id: string) => {
+  const approveTransaction = async (id: string) => {
+    const txToApprove = transactions.find(t => t.id === id);
     setTrxAll(prev => {
       const currentList = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: currentList.map(tx => tx.id === id ? { ...tx, status: "Approved" } : tx) };
     });
     logAction("Persetujuan Transaksi", `Menyetujui transaksi ID: ${id}`);
+    if (currentUser && txToApprove) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "transactions", id), { ...txToApprove, status: "Approved" });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/transactions/${id}`);
+      }
+    }
   };
 
   // Purchase Order
-  const addPurchaseOrder = (po: Omit<PurchaseOrder, "id" | "projectId">) => {
+  const addPurchaseOrder = async (po: Omit<PurchaseOrder, "id" | "projectId">) => {
     const id = "po-" + Math.random().toString(36).substr(2, 9);
     const newPo: PurchaseOrder = { ...po, id, projectId: activeProjId };
 
@@ -664,41 +1114,72 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...currentList, newPo] };
     });
     logAction("Tambah PO", `Membuat Purchase Order baru untuk supplier ${po.supplier}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "purchase_orders", id), newPo);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/purchase_orders/${id}`);
+      }
+    }
   };
 
-  const updatePOStatus = (id: string, status: "Draft" | "Approved" | "Ordered" | "Delivered") => {
+  const updatePOStatus = async (id: string, status: "Draft" | "Approved" | "Ordered" | "Delivered") => {
+    const targetPO = purchaseOrders.find(p => p.id === id);
+
     setPoAll(prev => {
       const currentList = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: currentList.map(item => item.id === id ? { ...item, status } : item) };
     });
     logAction("Update Status PO", `Mengubah status PO ${id} menjadi ${status}`);
+
+    if (currentUser && targetPO) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "purchase_orders", id), { ...targetPO, status });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/purchase_orders/${id}`);
+      }
+    }
     
+    // Notify when PO transitions from Draft to Approved by Direksi
+    if (targetPO && targetPO.status === "Draft" && status === "Approved") {
+      setNotifications(prev => [
+        {
+          id: `po-approved-${id}-${Date.now()}`,
+          title: "PO Baru Disetujui Direksi",
+          message: `Purchase Order ${targetPO.nomorPO} (${targetPO.material}, Qty: ${targetPO.qty}) telah disetujui oleh Direksi. Surat pesanan resmi dengan digital barcode siap diunduh!`,
+          read: false,
+          date: new Date().toLocaleDateString() + " " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+    }
+
     // Auto add to inventory if Delivered
     if (status === "Delivered") {
-      const targetPO = purchaseOrders.find(p => p.id === id);
       if (targetPO) {
-        adjustInventory(targetPO.material, targetPO.qty);
+        await adjustInventory(targetPO.material, targetPO.qty);
       }
     }
   };
 
   // Inventory & mutations
-  const adjustInventory = (materialName: string, amount: number) => {
+  const adjustInventory = async (materialName: string, amount: number) => {
+    let updatedItem: MaterialInventory | null = null;
     setInvAll(prev => {
       const list = prev[activeProjId] || [];
       const exists = list.some(i => i.materialName.toLowerCase() === materialName.toLowerCase());
       if (exists) {
-        return {
-          ...prev,
-          [activeProjId]: list.map(item => 
-            item.materialName.toLowerCase() === materialName.toLowerCase() 
-              ? { ...item, currentStock: item.currentStock + amount, lastUpdated: new Date().toISOString().split("T")[0] } 
-              : item
-          )
-        };
+        const newList = list.map(item => {
+          if (item.materialName.toLowerCase() === materialName.toLowerCase()) {
+            updatedItem = { ...item, currentStock: item.currentStock + amount, lastUpdated: new Date().toISOString().split("T")[0] };
+            return updatedItem;
+          }
+          return item;
+        });
+        return { ...prev, [activeProjId]: newList };
       } else {
         const id = "inv-" + Math.random().toString(36).substr(2, 9);
-        const newItem: MaterialInventory = {
+        updatedItem = {
           id,
           projectId: activeProjId,
           materialName,
@@ -707,9 +1188,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           unit: "Pcs",
           lastUpdated: new Date().toISOString().split("T")[0]
         };
-        return { ...prev, [activeProjId]: [...list, newItem] };
+        return { ...prev, [activeProjId]: [...list, updatedItem] };
       }
     });
+
+    if (currentUser && updatedItem) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "inventory", (updatedItem as MaterialInventory).id), updatedItem);
+      } catch (e) {
+        console.error(e);
+      }
+    }
 
     // Notify if low stock
     const invItem = inventory.find(i => i.materialName.toLowerCase() === materialName.toLowerCase());
@@ -727,7 +1216,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  const addMaterialMutation = (mut: Omit<MaterialMutation, "id" | "projectId">) => {
+  const addMaterialMutation = async (mut: Omit<MaterialMutation, "id" | "projectId">) => {
     const id = "mut-" + Math.random().toString(36).substr(2, 9);
     const newMut: MaterialMutation = { ...mut, id, projectId: activeProjId };
 
@@ -738,13 +1227,80 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Substract or Add Stock
     const factor = mut.type === "masuk" ? mut.qty : -mut.qty;
-    adjustInventory(mut.materialName, factor);
+    await adjustInventory(mut.materialName, factor);
 
     logAction("Mutasi Material", `Mutasi ${mut.type} baha: ${mut.materialName} qty: ${mut.qty}`);
+
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "mutations", id), newMut);
+      } catch(e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/mutations/${id}`);
+      }
+    }
+  };
+
+  const addInventoryItem = async (item: Omit<MaterialInventory, "id" | "projectId" | "lastUpdated">) => {
+    const id = "inv-" + Math.random().toString(36).substr(2, 9);
+    const newItem: MaterialInventory = {
+      ...item,
+      id,
+      projectId: activeProjId,
+      lastUpdated: new Date().toISOString().split("T")[0]
+    };
+    setInvAll(prev => {
+      const list = prev[activeProjId] || [];
+      return { ...prev, [activeProjId]: [...list, newItem] };
+    });
+    logAction("Tambah Material", `Menambahkan material baru: ${item.materialName}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "inventory", id), newItem);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/inventory/${id}`);
+      }
+    }
+  };
+
+  const updateInventoryItem = async (updated: MaterialInventory) => {
+    const nextItem = { ...updated, lastUpdated: new Date().toISOString().split("T")[0] };
+    setInvAll(prev => {
+      const list = prev[activeProjId] || [];
+      return {
+        ...prev,
+        [activeProjId]: list.map(item => item.id === updated.id ? nextItem : item)
+      };
+    });
+    logAction("Edit Material", `Memperbarui detail material: ${updated.materialName}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "inventory", updated.id), nextItem);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/inventory/${updated.id}`);
+      }
+    }
+  };
+
+  const deleteInventoryItem = async (id: string) => {
+    setInvAll(prev => {
+      const list = prev[activeProjId] || [];
+      return {
+        ...prev,
+        [activeProjId]: list.filter(item => item.id !== id)
+      };
+    });
+    logAction("Hapus Material", `Menghapus material ID: ${id}`);
+    if (currentUser) {
+      try {
+        await deleteDoc(doc(db, "projects", activeProjId, "inventory", id));
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `projects/${activeProjId}/inventory/${id}`);
+      }
+    }
   };
 
   // SDM
-  const addSDMStaff = (st: Omit<SDMStaff, "id" | "projectId">) => {
+  const addSDMStaff = async (st: Omit<SDMStaff, "id" | "projectId">) => {
     const id = "st-" + Math.random().toString(36).substr(2, 9);
     const newSt: SDMStaff = { ...st, id, projectId: activeProjId };
 
@@ -753,9 +1309,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...list, newSt] };
     });
     logAction("Tambah SDM", `Mendaftarkan tenaga kerja baru ${st.name}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "sdm_staff", id), newSt);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/sdm_staff/${id}`);
+      }
+    }
   };
 
-  const toggleAttendance = (staffId: string) => {
+  const toggleAttendance = async (staffId: string) => {
+    const targetStaff = staff.find(s => s.id === staffId);
     setStaffAll(prev => {
       const list = prev[activeProjId] || [];
       return {
@@ -764,10 +1328,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     });
     logAction("Ubah Absensi", `Mengubah status absensi harian staff ${staffId}`);
+    if (currentUser && targetStaff) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "sdm_staff", staffId), { ...targetStaff, attendanceToday: !targetStaff.attendanceToday });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/sdm_staff/${staffId}`);
+      }
+    }
   };
 
   // Quality Control
-  const addQCItem = (qc: Omit<QualityControlItem, "id" | "projectId">) => {
+  const addQCItem = async (qc: Omit<QualityControlItem, "id" | "projectId">) => {
     const id = "qc-" + Math.random().toString(36).substr(2, 9);
     const newQc: QualityControlItem = { ...qc, id, projectId: activeProjId };
 
@@ -776,18 +1347,33 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...list, newQc] };
     });
     logAction("Tambah Item QC", `Membuat kontrol QC baru: ${qc.checklistName}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "quality_control", id), newQc);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/quality_control/${id}`);
+      }
+    }
   };
 
-  const updateQCStatus = (id: string, status: "Open" | "Progress" | "Closed") => {
+  const updateQCStatus = async (id: string, status: "Open" | "Progress" | "Closed") => {
+    const targetQC = qcItems.find(q => q.id === id);
     setQcAll(prev => {
       const list = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: list.map(item => item.id === id ? { ...item, status } : item) };
     });
     logAction("Ubah Status QC", `Mengubah status QC ${id} menjadi ${status}`);
+    if (currentUser && targetQC) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "quality_control", id), { ...targetQC, status });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/quality_control/${id}`);
+      }
+    }
   };
 
   // Safety Records
-  const addSafetyRecord = (saf: Omit<SafetyRecord, "id" | "projectId">) => {
+  const addSafetyRecord = async (saf: Omit<SafetyRecord, "id" | "projectId">) => {
     const id = "sf-" + Math.random().toString(36).substr(2, 9);
     const newSf: SafetyRecord = { ...saf, id, projectId: activeProjId };
 
@@ -796,10 +1382,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...list, newSf] };
     });
     logAction("Tambah Safety Patrol/Event", `Menginput record K3: ${saf.type}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "safety_k3", id), newSf);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/safety_k3/${id}`);
+      }
+    }
   };
 
   // Documents
-  const addDocument = (document: Omit<DocumentRecord, "id" | "projectId" | "createdAt">) => {
+  const addDocument = async (document: Omit<DocumentRecord, "id" | "projectId" | "createdAt">) => {
     const id = "doc-" + Math.random().toString(36).substr(2, 9);
     const initialHist = document.category === "RFI" ? [{
       id: "hist-" + Math.random().toString(36).substr(2, 9),
@@ -824,42 +1417,59 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...list, newDocObj] };
     });
     logAction("Upload Dokumen", `Mengirim dokumen arsitektural/sipil: ${document.name}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "documents", id), newDocObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/documents/${id}`);
+      }
+    }
   };
 
-  const approveDocument = (id: string, approved: boolean) => {
+  const approveDocument = async (id: string, approved: boolean) => {
     const statusVal = approved ? "Approved" : "Rejected";
     const changedBy = currentUser?.name || "Offline User";
     const changedByRole = currentUser?.role || "Site Engineer";
     
+    let updatedDocObj: DocumentRecord | null = null;
     setDocAll(prev => {
       const list = prev[activeProjId] || [];
+      const newList = list.map(item => {
+        if (item.id === id) {
+          const histItem: RFIStatusHistory = {
+            id: "hist-" + Math.random().toString(36).substr(2, 9),
+            status: statusVal,
+            changedBy,
+            changedByRole,
+            timestamp: new Date().toISOString().replace('T', ' ').substr(0, 16),
+            note: `Dokumen ${approved ? "disetujui" : "ditolak"} oleh ${changedBy}`
+          };
+          const historyArray = item.statusHistory || [];
+          updatedDocObj = { 
+            ...item, 
+            status: statusVal,
+            statusHistory: item.category === "RFI" ? [...historyArray, histItem] : historyArray
+          };
+          return updatedDocObj;
+        }
+        return item;
+      });
       return { 
         ...prev, 
-        [activeProjId]: list.map(item => {
-          if (item.id === id) {
-            const histItem: RFIStatusHistory = {
-              id: "hist-" + Math.random().toString(36).substr(2, 9),
-              status: statusVal,
-              changedBy,
-              changedByRole,
-              timestamp: new Date().toISOString().replace('T', ' ').substr(0, 16),
-              note: `Dokumen ${approved ? "disetujui" : "ditolak"} oleh ${changedBy}`
-            };
-            const historyArray = item.statusHistory || [];
-            return { 
-              ...item, 
-              status: statusVal,
-              statusHistory: item.category === "RFI" ? [...historyArray, histItem] : historyArray
-            };
-          }
-          return item;
-        }) 
+        [activeProjId]: newList 
       };
     });
     logAction("Approval Dokumen", `Memproses persetujuan dokumen ${id} -> ${approved ? "Disetujui" : "Ditolak"}`);
+    if (currentUser && updatedDocObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "documents", id), updatedDocObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/documents/${id}`);
+      }
+    }
   };
 
-  const addRFIComment = (docId: string, commentText: string) => {
+  const addRFIComment = async (docId: string, commentText: string) => {
     const authorName = currentUser?.name || "Offline User";
     const authorRole = currentUser?.role || "Site Engineer";
     const newComment = {
@@ -870,26 +1480,36 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       timestamp: new Date().toISOString().replace('T', ' ').substr(0, 16)
     };
 
+    let updatedDocObj: DocumentRecord | null = null;
     setDocAll(prev => {
       const list = prev[activeProjId] || [];
+      const newList = list.map(docItem => {
+        if (docItem.id === docId) {
+          const commentsArray = docItem.comments || [];
+          updatedDocObj = {
+            ...docItem,
+            comments: [...commentsArray, newComment]
+          };
+          return updatedDocObj;
+        }
+        return docItem;
+      });
       return {
         ...prev,
-        [activeProjId]: list.map(docItem => {
-          if (docItem.id === docId) {
-            const commentsArray = docItem.comments || [];
-            return {
-              ...docItem,
-              comments: [...commentsArray, newComment]
-            };
-          }
-          return docItem;
-        })
+        [activeProjId]: newList
       };
     });
     logAction("Diskusi RFI", `Menambahkan komentar di RFI ID: ${docId}`);
+    if (currentUser && updatedDocObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "documents", docId), updatedDocObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/documents/${docId}`);
+      }
+    }
   };
 
-  const updateRFIStatus = (docId: string, status: "Draft" | "Approved" | "Rejected" | "Pending Approval", note?: string) => {
+  const updateRFIStatus = async (docId: string, status: "Draft" | "Approved" | "Rejected" | "Pending Approval", note?: string) => {
     const changedBy = currentUser?.name || "Offline User";
     const changedByRole = currentUser?.role || "Site Engineer";
     const newHistory: RFIStatusHistory = {
@@ -901,28 +1521,38 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       note: note || `Mengubah status dokumen RFI menjadi ${status}`
     };
 
+    let updatedDocObj: DocumentRecord | null = null;
     setDocAll(prev => {
       const list = prev[activeProjId] || [];
+      const newList = list.map(docItem => {
+        if (docItem.id === docId) {
+          const historyArray = docItem.statusHistory || [];
+          updatedDocObj = {
+            ...docItem,
+            status,
+            statusHistory: [...historyArray, newHistory]
+          };
+          return updatedDocObj;
+        }
+        return docItem;
+      });
       return {
         ...prev,
-        [activeProjId]: list.map(docItem => {
-          if (docItem.id === docId) {
-            const historyArray = docItem.statusHistory || [];
-            return {
-              ...docItem,
-              status,
-              statusHistory: [...historyArray, newHistory]
-            };
-          }
-          return docItem;
-        })
+        [activeProjId]: newList
       };
     });
     logAction("Status RFI", `Mengubah status RFI ID: ${docId} menjadi ${status}`);
+    if (currentUser && updatedDocObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "documents", docId), updatedDocObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/documents/${docId}`);
+      }
+    }
   };
 
   // Daily Reports
-  const addDailyReport = (rep: Omit<DailyReport, "id" | "projectId">) => {
+  const addDailyReport = async (rep: Omit<DailyReport, "id" | "projectId">) => {
     const id = "dr-" + Math.random().toString(36).substr(2, 9);
     const newRep: DailyReport = { ...rep, id, projectId: activeProjId };
 
@@ -931,10 +1561,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [newRep, ...list] };
     });
     logAction("Tambah Laporan Harian", `Menginput progres laporan harian tanggal ${rep.date}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "daily_reports", id), newRep);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/daily_reports/${id}`);
+      }
+    }
   };
 
   // Progress Reports
-  const addProgressReport = (pr: Omit<ProgressReport, "id" | "projectId">) => {
+  const addProgressReport = async (pr: Omit<ProgressReport, "id" | "projectId">) => {
     const id = "pr-" + Math.random().toString(36).substr(2, 9);
     const newPr: ProgressReport = { ...pr, id, projectId: activeProjId };
 
@@ -946,16 +1583,23 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Auto adjust parent project progress
     if (selectedProject) {
       const maxNewProgress = Math.min(100, selectedProject.progress + pr.persentaseProgress);
-      updateProject({
+      await updateProject({
         ...selectedProject,
         progress: parseFloat(maxNewProgress.toFixed(1))
       });
     }
 
     logAction("Tambah Progress Fisik", `Pekerjaan ${pr.itemPekerjaan} menyumbang progres ${pr.persentaseProgress}%`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "progress_reports", id), newPr);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/progress_reports/${id}`);
+      }
+    }
   };
 
-  const addTask = (task: Omit<Task, "id" | "projectId" | "creatorName" | "creatorRole">) => {
+  const addTask = async (task: Omit<Task, "id" | "projectId" | "creatorName" | "creatorRole">) => {
     const id = "task-" + Math.random().toString(36).substr(2, 9);
     const newTask: Task = { 
       ...task, 
@@ -970,9 +1614,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [newTask, ...list] };
     });
     logAction("Tambah Tugas", `Membuat tugas baru: ${task.title} untuk divisi ${task.assignedRole}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "tasks", id), newTask);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/tasks/${id}`);
+      }
+    }
   };
 
-  const updateTaskStatus = (id: string, status: Task["status"], notes?: string) => {
+  const updateTaskStatus = async (id: string, status: Task["status"], notes?: string) => {
+    const targetTask = tasks.find(t => t.id === id);
     setTasksAll(prev => {
       const list = prev[activeProjId] || [];
       return { 
@@ -981,17 +1633,130 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     });
     logAction("Ubah Status Tugas", `Mengubah status tugas ID: ${id} menjadi ${status}`);
+    if (currentUser && targetTask) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "tasks", id), { ...targetTask, status, notes: notes !== undefined ? notes : targetTask.notes });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/tasks/${id}`);
+      }
+    }
   };
 
-  const deleteTask = (id: string) => {
+  const deleteTask = async (id: string) => {
     setTasksAll(prev => {
       const list = prev[activeProjId] || [];
       return { ...prev, [activeProjId]: list.filter(item => item.id !== id) };
     });
     logAction("Hapus Tugas", `Menghapus tugas ID: ${id}`);
+    if (currentUser) {
+      try {
+        await deleteDoc(doc(db, "projects", activeProjId, "tasks", id));
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `projects/${activeProjId}/tasks/${id}`);
+      }
+    }
   };
 
-  const addDivisionalMessage = (targetRole: UserRole | "Semua", text: string) => {
+  const addSubTask = async (taskId: string, title: string, assignedToName: string, role: UserRole) => {
+    const id = "subtask-" + Math.random().toString(36).substr(2, 9);
+    const newSubTask = {
+      id,
+      title,
+      assignedToName,
+      role,
+      isCompleted: false
+    };
+
+    let updatedTaskObj: Task | null = null;
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      const newList = list.map(task => {
+        if (task.id === taskId) {
+          const subTasks = task.subTasks || [];
+          updatedTaskObj = { ...task, subTasks: [...subTasks, newSubTask] };
+          return updatedTaskObj;
+        }
+        return task;
+      });
+      return {
+        ...prev,
+        [activeProjId]: newList
+      };
+    });
+    logAction("Tambah Sub-Tugas", `Menambahkan sub-tugas "${title}" ke tugas ID: ${taskId}`);
+    if (currentUser && updatedTaskObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "tasks", taskId), updatedTaskObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/tasks/${taskId}`);
+      }
+    }
+  };
+
+  const toggleSubTask = async (taskId: string, subTaskId: string) => {
+    let updatedTaskObj: Task | null = null;
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      const newList = list.map(task => {
+        if (task.id === taskId) {
+          const subTasks = task.subTasks || [];
+          const updatedSubTasks = subTasks.map(st => {
+            if (st.id === subTaskId) {
+              return { ...st, isCompleted: !st.isCompleted };
+            }
+            return st;
+          });
+          updatedTaskObj = { ...task, subTasks: updatedSubTasks };
+          return updatedTaskObj;
+        }
+        return task;
+      });
+      return {
+        ...prev,
+        [activeProjId]: newList
+      };
+    });
+    logAction("Toggle Sub-Tugas", `Mengubah status penyelesaian sub-tugas ID: ${subTaskId}`);
+    if (currentUser && updatedTaskObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "tasks", taskId), updatedTaskObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/tasks/${taskId}`);
+      }
+    }
+  };
+
+  const deleteSubTask = async (taskId: string, subTaskId: string) => {
+    let updatedTaskObj: Task | null = null;
+    setTasksAll(prev => {
+      const list = prev[activeProjId] || [];
+      const newList = list.map(task => {
+        if (task.id === taskId) {
+          const subTasks = task.subTasks || [];
+          updatedTaskObj = {
+            ...task,
+            subTasks: subTasks.filter(st => st.id !== subTaskId)
+          };
+          return updatedTaskObj;
+        }
+        return task;
+      });
+      return {
+        ...prev,
+        [activeProjId]: newList
+      };
+    });
+    logAction("Hapus Sub-Tugas", `Menghapus sub-tugas ID: ${subTaskId} dari tugas ID: ${taskId}`);
+    if (currentUser && updatedTaskObj) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "tasks", taskId), updatedTaskObj);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/tasks/${taskId}`);
+      }
+    }
+  };
+
+  const addDivisionalMessage = async (targetRole: UserRole | "Semua", text: string) => {
     const id = "msg-" + Math.random().toString(36).substr(2, 9);
     const newMsg: DivisionalMessage = {
       id,
@@ -1008,6 +1773,13 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { ...prev, [activeProjId]: [...list, newMsg] };
     });
     logAction("Komunikasi Divisi", `Mengirim pesan komunikasi divisi untuk target ${targetRole}`);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "projects", activeProjId, "divisional_messages", id), newMsg);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `projects/${activeProjId}/divisional_messages/${id}`);
+      }
+    }
   };
 
   // Server-Side AI Assistant trigger
@@ -1145,6 +1917,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updatePOStatus,
       adjustInventory,
       addMaterialMutation,
+      addInventoryItem,
+      updateInventoryItem,
+      deleteInventoryItem,
       addSDMStaff,
       toggleAttendance,
       addQCItem,
@@ -1160,6 +1935,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updateTaskStatus,
       deleteTask,
       addDivisionalMessage,
+      addSubTask,
+      toggleSubTask,
+      deleteSubTask,
       runAIAnalysis
     }}>
       {children}

@@ -5,9 +5,10 @@ import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
+const databaseId = (firebaseConfig as any).firestoreDatabaseId || undefined;
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+}, databaseId);
 export const auth = getAuth();
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();

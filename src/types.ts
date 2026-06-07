@@ -224,6 +224,14 @@ export interface AuditLog {
   timestamp: string;
 }
 
+export interface SubTask {
+  id: string;
+  title: string;
+  assignedToName: string;
+  role: UserRole;
+  isCompleted: boolean;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -236,6 +244,7 @@ export interface Task {
   creatorRole: UserRole;
   priority: "Low" | "Medium" | "High";
   notes?: string;
+  subTasks?: SubTask[];
 }
 
 export interface DivisionalMessage {
