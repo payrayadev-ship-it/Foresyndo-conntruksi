@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useProject } from "../context/ProjectContext";
 import { FileDown, FileUp, Plus, Trash2, Calculator, BarChart, DollarSign, ListCollapse, FileText } from "lucide-react";
 import { jsPDF } from "jspdf";
 
 export const RABManagement: React.FC = () => {
   const { rabItems, addRABItem, deleteRABItem, selectedProject } = useProject();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [kode, setKode] = useState("");
   const [uraian, setUraian] = useState("");
@@ -35,21 +36,149 @@ export const RABManagement: React.FC = () => {
 
   const totalRAB = rabItems.reduce((acc, current) => acc + current.total, 0);
 
-  // Simulated Excel Import
-  const triggerFakeImport = () => {
-    setImportStatus("Membaca file excel...");
-    setTimeout(() => {
-      addRABItem({
-        kodeItem: "F.01",
-        uraianPekerjaan: "Pengadaan Genset Cadangan Tambahan 250kVA [Import] ",
-        volume: 1,
-        satuan: "Unit",
-        hargaSatuan: 450000000,
-        total: 450000000
-      });
-      setImportStatus("Berhasil mengimpor 1 baris item RAB dari Excel!");
+  const triggerCSVUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Real CSV Import Parser
+  const handleCSVImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportStatus("Membaca file CSV...");
+    const reader = new FileReader();
+
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) {
+          throw new Error("File CSV kosong");
+        }
+
+        const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+        if (lines.length === 0) {
+          throw new Error("File CSV tidak memiliki baris data");
+        }
+
+        const parseCSVLine = (lineText: string): string[] => {
+          const result: string[] = [];
+          let current = "";
+          let inQuotes = false;
+          for (let i = 0; i < lineText.length; i++) {
+            const char = lineText[i];
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              result.push(current);
+              current = "";
+            } else {
+              current += char;
+            }
+          }
+          result.push(current);
+          return result;
+        };
+
+        const parsedRows = lines.map(line => parseCSVLine(line));
+
+        // Detect if there's a header line
+        let headerIndex = -1;
+        for (let i = 0; i < Math.min(parsedRows.length, 5); i++) {
+          const row = parsedRows[i];
+          const textJoined = row.join(" ").toLowerCase();
+          if (
+            textJoined.includes("kode") || 
+            textJoined.includes("uraian") || 
+            textJoined.includes("pekerjaan") || 
+            textJoined.includes("satuan")
+          ) {
+            headerIndex = i;
+            break;
+          }
+        }
+
+        let idxKode = 0;
+        let idxUraian = 1;
+        let idxVolume = 2;
+        let idxSatuan = 3;
+        let idxHargaSatuan = 4;
+
+        if (headerIndex !== -1) {
+          const headers = parsedRows[headerIndex].map(h => h.toLowerCase().trim());
+          const k = headers.findIndex(h => h.includes("kode"));
+          const u = headers.findIndex(h => h.includes("uraian") || h.includes("pekerjaan"));
+          const v = headers.findIndex(h => h.includes("vol") || h.includes("jumlah") || h.includes("qty"));
+          const s = headers.findIndex(h => h.includes("satuan") || h.includes("unit"));
+          const h = headers.findIndex(h => h.includes("harga") || h.includes("satuan") || h.includes("tarif") || h.includes("cost"));
+
+          if (k !== -1) idxKode = k;
+          if (u !== -1) idxUraian = u;
+          if (v !== -1) idxVolume = v;
+          if (s !== -1) idxSatuan = s;
+          if (h !== -1) idxHargaSatuan = h;
+        }
+
+        const startIndex = headerIndex !== -1 ? headerIndex + 1 : 0;
+        let importCount = 0;
+
+        for (let i = startIndex; i < parsedRows.length; i++) {
+          const row = parsedRows[i];
+          if (row.length < 2) continue; // skip short lines
+
+          const codeStr = row[idxKode]?.trim() || `R.${i}`;
+          const descriptionStr = row[idxUraian]?.trim();
+          if (!descriptionStr) continue;
+
+          // Convert formatted pricing string if any (e.g. "Rp. 1.000.000" or "$1,200") to numeric
+          const cleanStringNum = (str: string) => {
+            if (!str) return "0";
+            return str
+              .replace(/Rp\.?/gi, "")
+              .replace(/\./g, "")
+              .replace(/,/g, "")
+              .trim();
+          };
+
+          const volNum = parseFloat(cleanStringNum(row[idxVolume])) || 1;
+          const unitStr = row[idxSatuan]?.trim() || "Pcs";
+          let priceNum = parseFloat(cleanStringNum(row[idxHargaSatuan])) || 0;
+
+          if (isNaN(priceNum)) priceNum = 0;
+
+          await addRABItem({
+            kodeItem: codeStr,
+            uraianPekerjaan: descriptionStr,
+            volume: volNum,
+            satuan: unitStr,
+            hargaSatuan: priceNum,
+            total: volNum * priceNum
+          });
+
+          importCount++;
+        }
+
+        if (importCount === 0) {
+          throw new Error("Tidak ada item valid yang berhasil diimpor.");
+        }
+
+        setImportStatus(`Berhasil mengimpor ${importCount} baris item RAB dari file CSV!`);
+        setTimeout(() => setImportStatus(""), 5000);
+      } catch (err: any) {
+        setImportStatus(`Gagal mengimpor: ${err.message || err}`);
+        setTimeout(() => setImportStatus(""), 5500);
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    };
+
+    reader.onerror = () => {
+      setImportStatus("Gagal membaca file!");
       setTimeout(() => setImportStatus(""), 4000);
-    }, 1500);
+    };
+
+    reader.readAsText(file, "UTF-8");
   };
 
   // Simulated Excel/CSV Export
@@ -253,6 +382,13 @@ export const RABManagement: React.FC = () => {
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleCSVImport}
+        accept=".csv"
+        className="hidden"
+      />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-6">
         <div>
           <h2 className="text-lg font-bold text-slate-800 dark:text-white">Rencana Anggaran Biaya (RAB)</h2>
@@ -260,11 +396,11 @@ export const RABManagement: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-4 sm:mt-0">
           <button
-            onClick={triggerFakeImport}
+            onClick={triggerCSVUpload}
             className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-200 dark:border-slate-700/60 rounded text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
           >
             <FileUp className="w-3.5 h-3.5" />
-            <span>Import Excel</span>
+            <span>Import CSV</span>
           </button>
           <button
             onClick={triggerFakeExport}
@@ -364,7 +500,7 @@ export const RABManagement: React.FC = () => {
       {/* RAB List */}
       {rabItems.length === 0 ? (
         <div className="text-center py-12 text-slate-400 text-sm border-2 border-dashed border-slate-100 rounded-xl">
-          Belum ada rincian RAB yang dicatat. Silahkan tambah manual atau klik Import Excel.
+          Belum ada rincian RAB yang dicatat. Silahkan tambah manual atau klik Import CSV.
         </div>
       ) : (
         <div className="space-y-6">

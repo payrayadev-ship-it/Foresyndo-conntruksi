@@ -153,6 +153,16 @@ export const BQManagement: React.FC = () => {
   const [selectedBq, setSelectedBq] = useState<string | null>(null);
   const [filterDivision, setFilterDivision] = useState<string>("ALL");
 
+  // CSV Import & mail state variables
+  const [showBqImport, setShowBqImport] = useState(false);
+  const [bqImportLog, setBqImportLog] = useState("");
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTo, setEmailTo] = useState("payrayadev@gmail.com");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailStep, setEmailStep] = useState<string>("");
+
   // Local Form state for main BQ
   const [showAddForm, setShowAddForm] = useState(false);
   const [newCode, setNewCode] = useState("");
@@ -381,6 +391,156 @@ export const BQManagement: React.FC = () => {
     showAlert(`Sukses menyalin item '${bqItem.code}' ke Modul RAB Utama proyek!`, "success");
   };
 
+  // CSV Import/Export & Email Sender Helper for BOQ
+  const downloadBQTemplate = () => {
+    const headers = "Divisi,Kode,Nama Pekerjaan,Volume,Satuan,Harga Satuan";
+    const sampleRow = "DIVISI 1 - PEKERJAAN PERSIAPAN,1.05,Pagar Seng Konstruksi Sementara h=2m,150,m1,125000";
+    const csvContent = "\uFEFF" + [headers, sampleRow].join("\n"); // prepend BOM for Excel compatibility
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Template_BOQ_Import.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showAlert("Template CSV BOQ berhasil diunduh.", "success");
+  };
+
+  const handleImportBQCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBqImportLog("Membaca file CSV BOQ...");
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) throw new Error("File kosong");
+
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length <= 1) throw new Error("File tidak memiliki baris data");
+
+        const splitLine = (l: string) => {
+          const cells: string[] = [];
+          let current = "";
+          let insideQuotes = false;
+          for (let i = 0; i < l.length; i++) {
+            const char = l[i];
+            if (char === '"') {
+              insideQuotes = !insideQuotes;
+            } else if (char === ',' && !insideQuotes) {
+              cells.push(current);
+              current = "";
+            } else {
+              current += char;
+            }
+          }
+          cells.push(current);
+          return cells;
+        };
+
+        const cleanVal = (str: string) => str ? str.replace(/^"|"$/g, '').trim() : "";
+        const cleanNum = (str: string) => {
+          if (!str) return 0;
+          const cleanStr = str.replace(/^"|"$/g, '').replace(/\./g, "").replace(/,/g, "").trim();
+          return parseFloat(cleanStr) || 0;
+        };
+
+        const parsedRows = lines.map(splitLine);
+        let headerIndex = 0;
+        for (let i = 0; i < Math.min(parsedRows.length, 3); i++) {
+          const joinedLow = parsedRows[i].join(" ").toLowerCase();
+          if (joinedLow.includes("divisi") || joinedLow.includes("kode") || joinedLow.includes("uraian") || joinedLow.includes("pekerjaan")) {
+            headerIndex = i;
+            break;
+          }
+        }
+
+        const startIndex = headerIndex + 1;
+        let count = 0;
+        const newBqItems: BQItem[] = [];
+
+        for (let i = startIndex; i < parsedRows.length; i++) {
+          const row = parsedRows[i];
+          if (row.length < 3) continue;
+
+          const division = cleanVal(row[0]) || "DIVISI UMUM - LAINNYA";
+          const code = cleanVal(row[1]) || `BQ-${Math.floor(100 + Math.random() * 900)}`;
+          const name = cleanVal(row[2]);
+          if (!name) continue;
+
+          const qty = cleanNum(row[3]) || 1;
+          const unit = cleanVal(row[4]) || "Unit";
+          const unitPrice = cleanNum(row[5]) || 0;
+          const total = qty * unitPrice;
+
+          newBqItems.push({
+            id: `bq-import-${Math.random().toString(36).substring(2, 9)}`,
+            division,
+            code,
+            name,
+            qty,
+            unit,
+            unitPrice,
+            total,
+            measurements: [],
+            ahsp: []
+          });
+          count++;
+        }
+
+        if (newBqItems.length > 0) {
+          setBqList(prev => {
+            const current = prev[activeProjId] || [];
+            const existingCodes = new Set(current.map(c => c.code.toLowerCase()));
+            const filteredNew = newBqItems.filter(item => !existingCodes.has(item.code.toLowerCase()));
+            const updated = [...current, ...filteredNew];
+            return { ...prev, [activeProjId]: updated };
+          });
+          showAlert(`Berhasil mengimpor ${count} item BQ!`, "success");
+          setBqImportLog(`Impor Sukses! ${count} data terdaftar.`);
+          setTimeout(() => setBqImportLog(""), 5000);
+          setShowBqImport(false);
+        } else {
+          throw new Error("Tidak ada data valid yang bisa diimpor.");
+        }
+      } catch (err: any) {
+        setBqImportLog(`Gagal: ${err.message || err}`);
+        showAlert(`Gagal impor: ${err.message || err}`, "info");
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  const triggerEmailBQ = () => {
+    setEmailSubject(`[BOQ] Bill of Quantities - Proyek ${selectedProject?.namaProyek || "FGI BSD Office Tower"}`);
+    setEmailBody(`Yth. Bapak/Ibu,\n\nBersama email ini kami lampirkan dokumen perencanaan Bill of Quantities (BQ) untuk Proyek: ${selectedProject?.namaProyek || "BSD Office Tower"}.\nTotal Estimasi Biaya Pekerjaan adalah sebesar Rp ${totalBQ.toLocaleString("id-ID")}.\n\nSilakan tinjau rincian lengkapnya pada lampiran file PDF.\n\nHormat kami,\nDivisi Estimator & Procurement\nPT Foresyndo Konstruksi Group`);
+    setShowEmailModal(true);
+  };
+
+  const handleSendEmailSimulated = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSendingEmail(true);
+    setEmailStep("Mempersiapkan dokumen PDF & lampiran...");
+    
+    setTimeout(() => {
+      setEmailStep("Melakukan kompilasi PDF & lampiran...");
+      setTimeout(() => {
+        setEmailStep("Menghubungkan ke email relay (mail.foresyndo.com)...");
+        setTimeout(() => {
+          setEmailStep("Mengirim envelope dokumen ke penerima...");
+          setTimeout(() => {
+            setIsSendingEmail(false);
+            setShowEmailModal(false);
+            setEmailStep("");
+            showAlert(`E-mail berhasil dikirim ke ${emailTo} dengan aman!`, "success");
+          }, 1000);
+        }, 1000);
+      }, 1000);
+    }, 1000);
+  };
+
   const handleExportBQPDF = () => {
     const doc = new jsPDF({
       orientation: "landscape",
@@ -508,6 +668,19 @@ export const BQManagement: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Import CSV BoQ */}
+          <button
+            onClick={() => setShowBqImport(!showBqImport)}
+            className={`py-2 px-3.5 text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer ${
+              showBqImport 
+                ? "bg-amber-600 text-white" 
+                : "bg-amber-500 hover:bg-amber-600 text-slate-950 font-black"
+            }`}
+          >
+            <FileUp className="w-4 h-4" />
+            <span>Impor CSV BQ</span>
+          </button>
+
           {/* Export PDF */}
           <button
             onClick={handleExportBQPDF}
@@ -515,6 +688,15 @@ export const BQManagement: React.FC = () => {
           >
             <FileText className="w-4 h-4 text-amber-500" />
             Ekspor BQ PDF
+          </button>
+
+          {/* Email PDF */}
+          <button
+            onClick={triggerEmailBQ}
+            className="py-2 px-3.5 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+          >
+            <FileText className="w-4 h-4 text-white" />
+            Kirim Email BQ
           </button>
 
           {/* Add Item Trigger */}
@@ -527,6 +709,41 @@ export const BQManagement: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* CSV IMPORT BQ DROPZONE PANEL */}
+      {showBqImport && (
+        <div className="bg-amber-500/5 border border-amber-500/20 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 text-xs animate-in slide-in-from-top-6 text-left">
+          <div className="space-y-1 text-left">
+            <h3 className="font-bold text-slate-800 dark:text-amber-400 flex items-center gap-1.5 uppercase font-mono tracking-wider">
+              <FileUp className="w-4 h-4 text-amber-500" />
+              Impor Massal Bill of Quantities (BoQ) via CSV
+            </h3>
+            <p className="text-slate-500">
+              Unggah file CSV dengan kolom header standar: <strong className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10.5px]">Divisi, Kode, Nama Pekerjaan, Volume, Satuan, Harga Satuan</strong>
+            </p>
+            {bqImportLog && (
+              <p className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 animate-pulse mt-2">{bqImportLog}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+            <button
+              onClick={downloadBQTemplate}
+              className="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-850 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-xl transition cursor-pointer"
+            >
+              Unduh Template CSV
+            </button>
+            <label className="px-5 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-extrabold rounded-xl transition cursor-pointer shadow-sm relative overflow-hidden">
+              <span>Pilih File CSV...</span>
+              <input 
+                type="file" 
+                accept=".csv" 
+                onChange={handleImportBQCSV} 
+                className="absolute inset-0 opacity-0 cursor-pointer" 
+              />
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* ALERT COMPONENT */}
       {alert && (
@@ -1055,6 +1272,104 @@ export const BQManagement: React.FC = () => {
         </div>
 
       </div>
+
+      {/* EMAIL COMPILING SENDER DIALOG */}
+      {showEmailModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 text-left">
+          <div className="bg-white dark:bg-slate-950 border border-slate-205 dark:border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95">
+            <div className="bg-slate-900 dark:bg-black p-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-amber-500" />
+                <span className="font-bold text-sm">Foresyndo Mail Dispatcher - BQ Suite</span>
+              </div>
+              <button 
+                onClick={() => !isSendingEmail && setShowEmailModal(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold font-mono p-1"
+                disabled={isSendingEmail}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSendEmailSimulated} className="p-5 space-y-4 text-xs font-medium">
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[9.5px]">Kepada (Email Penerima)</label>
+                <input 
+                  type="email" 
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  className="w-full p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white text-xs font-bold font-sans"
+                  placeholder="name@company.com"
+                  required
+                  disabled={isSendingEmail}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[9.5px]">Subjek Surat</label>
+                <input 
+                  type="text" 
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white text-xs font-bold font-sans"
+                  required
+                  disabled={isSendingEmail}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[9.5px]">Pesan Pengantar</label>
+                <textarea 
+                  rows={6}
+                  value={emailBody}
+                  onChange={(e) => setEmailBody(e.target.value)}
+                  className="w-full p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white text-xs font-mono"
+                  required
+                  disabled={isSendingEmail}
+                />
+              </div>
+
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-lg border border-blue-500/10 flex items-center justify-between text-[11px] text-blue-600 dark:text-blue-400">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Lampiran Terdeteksi:</span>
+                </div>
+                <span className="font-mono font-black underline truncate max-w-[200px]">Bill_of_Quantities_Foresyndo.pdf (Auto)</span>
+              </div>
+
+              {isSendingEmail && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200/50 dark:border-slate-800 space-y-2 animate-pulse text-[11px] font-mono">
+                  <div className="flex items-center gap-2 text-blue-600">
+                    <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                    <span className="font-black">{emailStep}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-blue-600 h-full rounded-full transition-all duration-1000 w-3/4 animate-pulse"></div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 border-t dark:border-slate-800 pt-3.5">
+                <button 
+                  type="button" 
+                  onClick={() => setShowEmailModal(false)}
+                  className="px-4 py-2 border rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold"
+                  disabled={isSendingEmail}
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit"
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded shadow-md flex items-center gap-1.5 cursor-pointer"
+                  disabled={isSendingEmail}
+                >
+                  <span>Kirim Sekarang</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

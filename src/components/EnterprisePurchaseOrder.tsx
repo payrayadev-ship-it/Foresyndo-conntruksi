@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { useProject } from "../context/ProjectContext";
 import { UserRole } from "../types";
+import { jsPDF } from "jspdf";
 import {
   ShoppingCart, ShieldAlert, Plus, Trash2, CheckCircle2, AlertCircle, FileText,
   Truck, Banknote, HelpCircle, ArrowUpRight, Search, Download, Filter, Eye,
-  Sparkles, Star, Check, X, ShieldCheck, TrendingUp, DollarSign, RefreshCw, ThumbsUp, Send, Ban
+  Sparkles, Star, Check, X, ShieldCheck, TrendingUp, DollarSign, RefreshCw, ThumbsUp, Send, Ban,
+  FileUp, Layers, Hammer, Package
 } from "lucide-react";
 
 // Types
@@ -136,6 +138,22 @@ export function EnterprisePurchaseOrder() {
   const [activeRole, setActiveRole] = useState<UserRole>(currentUser?.role || UserRole.PROJECT_MANAGER);
   const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "suppliers" | "requests" | "comparison" | "orders" | "logistics" | "finance" | "reports">("dashboard");
 
+  // CSV Import, PDF, and Email utilities state variables
+  const [showPOImport, setShowPOImport] = useState(false);
+  const [poImportLog, setPoImportLog] = useState("");
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTo, setEmailTo] = useState("payrayadev@gmail.com");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailType, setEmailType] = useState<"comparison" | "invoice" | "report" | "po">("po");
+  const [emailAttachmentName, setEmailAttachmentName] = useState("");
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailStep, setEmailStep] = useState("");
+
+  const [selectedInvoiceData, setSelectedInvoiceData] = useState<SupplierInvoice | null>(null);
+  const [selectedComparisonData, setSelectedComparisonData] = useState<QuotationComparison | null>(null);
+  const [selectedReportData, setSelectedReportData] = useState<any>(null);
+
   // Notifications Console State
   const [notifications, setNotifications] = useState<{ id: string; type: "info" | "success" | "warning"; text: string; time: string }[]>([
     { id: "1", type: "info", text: "Sistem Purchase Request terverifikasi. Siap mengajukan material.", time: "10:00" },
@@ -154,7 +172,8 @@ export function EnterprisePurchaseOrder() {
   });
 
   const [materials, setMaterials] = useState<MaterialItem[]>(() => {
-    return [
+    const saved = localStorage.getItem("fos_po_materials");
+    return saved ? JSON.parse(saved) : [
       { id: "m-1", code: "MAT-001", name: "Besi Beton Ø 12mm", category: "Besi", brand: "Krakatau Steel", spec: "BJTS 420, Panjang 12m", unit: "Batang", standardPrice: 115000, minStock: 200, maxStock: 2000 },
       { id: "m-2", code: "MAT-002", name: "Semen Portland Composite (PCC)", category: "Semen", brand: "Semen Padang", spec: "Tipe I, Berat 50kg", unit: "Zak", standardPrice: 72000, minStock: 100, maxStock: 1000 },
       { id: "m-3", code: "MAT-003", name: "Beton Ready Mix K-350", category: "Beton", brand: "Adhi Mix", spec: "Slump 12±2, Fly Ash", unit: "m3", standardPrice: 980000, minStock: 50, maxStock: 500 },
@@ -163,7 +182,8 @@ export function EnterprisePurchaseOrder() {
   });
 
   const [services, setServices] = useState<ServiceItem[]>(() => {
-    return [
+    const saved = localStorage.getItem("fos_po_services");
+    return saved ? JSON.parse(saved) : [
       { id: "srv-1", code: "SRV-001", name: "Pemasangan Bekisting Kolom", description: "Tenaga + Alat bantu bekisting plywood", unit: "m2", standardPrice: 65000 },
       { id: "srv-2", code: "SRV-002", name: "Pengecoran Plat Lantai", description: "Jasa perataan beton ready-mix", unit: "m3", standardPrice: 45000 },
       { id: "srv-3", code: "SRV-003", name: "Fabrikasi Rangka Baja", description: "Pemotongan & pengelasan struktur utama", unit: "Ton", standardPrice: 2800000 }
@@ -293,6 +313,12 @@ export function EnterprisePurchaseOrder() {
     localStorage.setItem("fos_po_suppliers", JSON.stringify(suppliers));
   }, [suppliers]);
   useEffect(() => {
+    localStorage.setItem("fos_po_materials", JSON.stringify(materials));
+  }, [materials]);
+  useEffect(() => {
+    localStorage.setItem("fos_po_services", JSON.stringify(services));
+  }, [services]);
+  useEffect(() => {
     localStorage.setItem("fos_po_requests", JSON.stringify(requests));
   }, [requests]);
   useEffect(() => {
@@ -314,6 +340,10 @@ export function EnterprisePurchaseOrder() {
   // Form States & Temp Values
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddSupplier, setShowAddSupplier] = useState(false);
+  const [showMasterImport, setShowMasterImport] = useState(false);
+  const [importMasterType, setImportMasterType] = useState<"supplier" | "material" | "jasa">("supplier");
+  const [activeMasterSubTab, setActiveMasterSubTab] = useState<"suppliers" | "materials" | "services">("suppliers");
+  const [importLogMessage, setImportLogMessage] = useState("");
   const [showAddPR, setShowAddPR] = useState(false);
   const [showAddPOManual, setShowAddPOManual] = useState(false);
   const [showAddGR, setShowAddGR] = useState(false);
@@ -391,6 +421,548 @@ export function EnterprisePurchaseOrder() {
   const addSysNotify = (type: "info" | "success" | "warning", text: string) => {
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     setNotifications(prev => [{ id: Date.now().toString(), type, text, time: now }, ...prev]);
+  };
+
+  // PO CSV Import/Export helpers
+  const downloadPOTemplate = () => {
+    const headers = "Nomor PO,Tanggal PO,Pemasok,Metode Pembayaran,Alamat Pengiriman,Kode Material,Nama Material,Spesifikasi,Kuantitas,Satuan,Harga Satuan";
+    const sampleRow1 = "PO-2026-06-00099,2026-06-01,Krakatau Steel Utama,Term 30 Days,Site Proyek BSD Blok C,MAT-01,Besi Beton D12,SNI Resmi Panjang 12m,500,Batang,115000";
+    const sampleRow2 = "PO-2026-06-00099,2026-06-01,Krakatau Steel Utama,Term 30 Days,Site Proyek BSD Blok C,MAT-02,Besi Beton D16,SNI Resmi Panjang 12m,200,Batang,185000";
+    const csvContent = "\uFEFF" + [headers, sampleRow1, sampleRow2].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "Template_PO_Import.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addSysNotify("success", "Template CSV PO berhasil diunduh.");
+  };
+
+  const handleImportPOCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPoImportLog("Membaca file CSV PO...");
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) throw new Error("File kosong");
+
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length <= 1) throw new Error("File tidak memiliki baris data");
+
+        const splitLine = (lineStr: string) => {
+          const result: string[] = [];
+          let cur = "";
+          let quotes = false;
+          for (let idx = 0; idx < lineStr.length; idx++) {
+            const ch = lineStr[idx];
+            if (ch === '"') {
+              quotes = !quotes;
+            } else if (ch === ',' && !quotes) {
+              result.push(cur);
+              cur = "";
+            } else {
+              cur += ch;
+            }
+          }
+          result.push(cur);
+          return result;
+        };
+
+        const cleanVal = (str: string) => str ? str.replace(/^"|"$/g, '').trim() : "";
+        const cleanNum = (str: string) => {
+          if (!str) return 0;
+          const cleanStr = str.replace(/^"|"$/g, '').replace(/\./g, "").replace(/,/g, "").trim();
+          return parseFloat(cleanStr) || 0;
+        };
+
+        const parsedRows = lines.map(splitLine);
+        let headerIndex = 0;
+        for (let i = 0; i < Math.min(parsedRows.length, 3); i++) {
+          const joinedLow = parsedRows[i].join(" ").toLowerCase();
+          if (joinedLow.includes("nomor") || joinedLow.includes("pemasok") || joinedLow.includes("metode")) {
+            headerIndex = i;
+            break;
+          }
+        }
+
+        const startIndex = headerIndex + 1;
+        const tempOrdersMap: Record<string, any> = {};
+
+        for (let i = startIndex; i < parsedRows.length; i++) {
+          const row = parsedRows[i];
+          if (row.length < 5) continue;
+
+          const nomorPO = cleanVal(row[0]);
+          if (!nomorPO) continue;
+
+          const date = cleanVal(row[1]) || new Date().toISOString().split("T")[0];
+          const supplierName = cleanVal(row[2]) || "Krakatau Steel Utama";
+          const paymentMethod = cleanVal(row[3]) || "COD / Cash";
+          const deliveryAddress = cleanVal(row[4]) || selectedProject?.lokasi || "Site Proyek FGI";
+
+          const code = cleanVal(row[5]) || "MAT-GEN";
+          const name = cleanVal(row[6]) || "Material Lain-lain";
+          const spec = cleanVal(row[7]) || "Standar Pabrik";
+          const qty = cleanNum(row[8]) || 1;
+          const unit = cleanVal(row[9]) || "Unit";
+          const price = cleanNum(row[10]) || 0;
+          const itemTotal = qty * price;
+
+          const itemObj = { code, name, spec, qty, unit, price, discount: 0, tax: 11, total: itemTotal };
+
+          if (!tempOrdersMap[nomorPO]) {
+            tempOrdersMap[nomorPO] = {
+              id: `po-import-${Math.random().toString(36).substring(2, 9)}`,
+              nomorPO,
+              date,
+              projectName: selectedProject?.namaProyek || "Proyek BSD Tower",
+              supplierName,
+              deliveryDate: date,
+              deliveryAddress,
+              paymentMethod,
+              dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+              notes: "Diimpor via upload file CSV oleh Estimator.",
+              items: [],
+              status: "Draft",
+              deliveryStatus: "Belum Dikirim",
+              paymentStatus: "Belum Dibayar"
+            };
+          }
+          tempOrdersMap[nomorPO].items.push(itemObj);
+        }
+
+        const listOfNewOrders: POExtended[] = Object.values(tempOrdersMap).map((o: any) => {
+          const subtotal = o.items.reduce((sum: number, it: any) => sum + it.total, 0);
+          const discountTotal = 0;
+          const ppn = Math.round(subtotal * 0.11);
+          const pph = Math.round(subtotal * 0.02);
+          const grandTotal = subtotal + ppn - pph;
+
+          return { ...o, subtotal, discountTotal, ppn, pph, grandTotal };
+        });
+
+        if (listOfNewOrders.length > 0) {
+          setOrders(prev => {
+            const existingNums = new Set(prev.map(p => p.nomorPO.toLowerCase()));
+            const filteredNew = listOfNewOrders.filter(o => !existingNums.has(o.nomorPO.toLowerCase()));
+            return [...prev, ...filteredNew];
+          });
+          const count = listOfNewOrders.reduce((sum, o) => sum + o.items.length, 0);
+          addSysNotify("success", `Berhasil mengimpor ${listOfNewOrders.length} transaksi PO (${count} item)!`);
+          setPoImportLog(`Impor Sukses! ${listOfNewOrders.length} transaksi PO terdaftar.`);
+          setTimeout(() => setPoImportLog(""), 5000);
+          setShowPOImport(false);
+        } else {
+          throw new Error("Tidak ada data PO valid yang ditemukan dalam CSV.");
+        }
+      } catch (err: any) {
+        setPoImportLog(`Gagal: ${err.message || err}`);
+        addSysNotify("warning", `Gagal impor PO: ${err.message || err}`);
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  // PDF Export and Email trigger handlers
+  const handleExportComparisonPDF = (comp: QuotationComparison) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const marginX = 15;
+    let currentY = 20;
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 35, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("PT FORESYNDO KONSTRUKSI GROUP", marginX, 13);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Engineering, Procurement & Estimating System", marginX, 18);
+    doc.text("Gedung Graha Lestari, Menteng Jakarta Pusat", marginX, 22);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("EVALUASI BANDING PENAWARAN VENDOR", 115, 13);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Rujukan PR: ${comp.prNum}`, 115, 18);
+    doc.text(`Detail Item: ${comp.itemName} (Volume: ${comp.qty})`, 115, 22);
+    doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString("id-ID")}`, 115, 27);
+
+    currentY = 45;
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("INFORMASI ITEM PENGADAAN & INTEGRITAS VENDOR", marginX, currentY);
+    currentY += 5;
+
+    doc.setDrawColor(226, 232, 240);
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 5;
+
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Nama Pekerjaan / Material :  ${comp.itemName}`, marginX + 3, currentY);
+    currentY += 5;
+    doc.text(`Kebutuhan Kuantitas            :  ${comp.qty.toLocaleString()} Unit`, marginX + 3, currentY);
+    currentY += 5;
+    doc.text(`Kebijakan Audit                  :  Minimal 3 penawaran harga pendaftaran untuk transparansi.`, marginX + 3, currentY);
+
+    currentY += 12;
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("RINCIAN PENAWARAN HARGA MITRA MASUK (BIDDING LOG)", marginX, currentY);
+    currentY += 5;
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 5;
+
+    doc.setFillColor(241, 245, 249);
+    doc.rect(marginX, currentY, 180, 8, "F");
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+
+    doc.text("PEMASOK / VENDOR", marginX + 3, currentY + 5.5);
+    doc.text("HARGA SATUAN", marginX + 65, currentY + 5.5);
+    doc.text("TOTAL ESTIMASI", marginX + 105, currentY + 5.5);
+    doc.text("KIRIM (HARI)", marginX + 145, currentY + 5.5);
+    doc.text("MUTU & GARANSI", marginX + 165, currentY + 5.5);
+
+    currentY += 8;
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+
+    comp.offers.forEach((offer) => {
+      doc.line(marginX, currentY, 195, currentY);
+      doc.setFont("Helvetica", "bold");
+      doc.text(offer.supplierName, marginX + 3, currentY + 5);
+      doc.setFont("Helvetica", "normal");
+      doc.text(`Rp ${offer.pricePerUnit.toLocaleString("id-ID")}`, marginX + 65, currentY + 5);
+      doc.setFont("Helvetica", "bold");
+      doc.text(`Rp ${(offer.pricePerUnit * comp.qty).toLocaleString("id-ID")}`, marginX + 105, currentY + 5);
+      doc.setFont("Helvetica", "normal");
+      doc.text(`${offer.deliveryDays} Hari`, marginX + 145, currentY + 5);
+      let gar = offer.warranty;
+      if (gar.length > 18) gar = gar.substring(0, 16) + "..";
+      doc.text(gar, marginX + 165, currentY + 5);
+
+      currentY += 8;
+    });
+
+    currentY += 10;
+    doc.setLineWidth(0.3);
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 5;
+
+    const prices = comp.offers.map(o => o.pricePerUnit);
+    const minPrice = Math.min(...prices);
+    const winners = comp.offers.filter(o => o.pricePerUnit === minPrice);
+
+    if (winners.length > 0) {
+      doc.setFillColor(240, 253, 250);
+      doc.rect(marginX, currentY, 180, 15, "F");
+      doc.setDrawColor(20, 184, 166);
+      doc.rect(marginX, currentY, 180, 15, "S");
+
+      doc.setTextColor(13, 148, 136);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("REKOMENDASI DEPARTEMEN PROCUREMENT (PEMASOK TERPILIH):", marginX + 4, currentY + 5);
+      doc.setFont("Helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(8.5);
+      doc.text(`Pilihan Utama jatuh kepada ${winners[0].supplierName} dengan penghematan efisiensi unit Rp ${winners[0].pricePerUnit.toLocaleString("id-ID")}.`, marginX + 4, currentY + 11);
+    }
+
+    currentY += 25;
+
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Ditinjau & Diajukan,", marginX + 10, currentY);
+    doc.text("Disahkan & Disetujui,", marginX + 120, currentY);
+
+    currentY += 18;
+    doc.setFont("Helvetica", "bold");
+    doc.text("[ Staff Procurement ]", marginX + 10, currentY);
+    doc.text("[ Project Manager / PM ]", marginX + 120, currentY);
+
+    doc.save(`Evaluasi_Banding_Penawaran_${comp.prNum}.pdf`);
+  };
+
+  const triggerEmailComparison = (comp: QuotationComparison) => {
+    setSelectedComparisonData(comp);
+    setEmailType("comparison");
+    setEmailSubject(`[EVALUATION] Banding Harga Pemasok: ${comp.itemName} (Rujuk ${comp.prNum})`);
+    
+    const prices = comp.offers.map(o => o.pricePerUnit);
+    const minPrice = Math.min(...prices);
+    const winner = comp.offers.find(o => o.pricePerUnit === minPrice);
+
+    setEmailBody(`Yth. Komite Direksi PT Foresyndo,\n\nBerikut kami lampirkan dokumen Evaluasi Banding Penawaran Vendor resmi untuk Item Pekerjaan: "${comp.itemName}".\n\nBerdasarkan SOP Pengadaan, dengan merujuk perbandingan 3 vendor:\n- Supplier Termurah & Rekomendasi Utama: ${winner ? winner.supplierName : "Terlampir"}\n- Total Kebutuhan Anggaran: Rp ${(minPrice * comp.qty).toLocaleString("id-ID")}\n\nSilakan tinjau rincian penawaran & aspek legal lainnya pada lampiran berkas PDF.\n\nHormat kami,\nProcurement Dept - FGI`);
+    setEmailAttachmentName(`Evaluasi_Banding_Penawaran_${comp.prNum}.pdf`);
+    setShowEmailModal(true);
+  };
+
+  const handleExportInvoicePDF = (inv: SupplierInvoice) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const marginX = 15;
+    let currentY = 20;
+
+    doc.setFillColor(51, 65, 85);
+    doc.rect(0, 0, 210, 35, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("PT FORESYNDO KONSTRUKSI GROUP", marginX, 13);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Engineering Office & Finance Department Solutions", marginX, 18);
+    doc.text("E-mail: finance@foresyndo.com | Telp: +62 21-8888-888", marginX, 22);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("SLIP TAGIHAN INVOICE VENDOR", 125, 13);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Nomor tagihan: ${inv.invoiceNumber}`, 125, 18);
+    doc.text(`Proyek: ${selectedProject?.namaProyek || "BSD Tower"}`, 125, 22);
+    doc.text(`Dicetak: ${new Date().toLocaleDateString("id-ID")}`, 125, 27);
+
+    currentY = 45;
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("KONSPIRASI TRANSAKSI INVOICE & HUTANG DAGANG AP", marginX, currentY);
+    currentY += 5;
+
+    doc.setDrawColor(226, 232, 240);
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 6;
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Informasi Vendor:", marginX + 3, currentY);
+    doc.setFont("Helvetica", "normal");
+    doc.text(inv.supplierName, marginX + 38, currentY);
+    currentY += 5;
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Nomor Referensi PO:", marginX + 3, currentY);
+    doc.setFont("Helvetica", "normal");
+    doc.text(inv.poNumber, marginX + 38, currentY);
+    currentY += 5;
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Nomor Goods Receipt:", marginX + 3, currentY);
+    doc.setFont("Helvetica", "normal");
+    doc.text(inv.grNumber, marginX + 38, currentY);
+    currentY += 5;
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Tanggal Invoice:", marginX + 3, currentY);
+    doc.setFont("Helvetica", "normal");
+    doc.text(inv.invoiceDate, marginX + 38, currentY);
+    currentY += 5;
+
+    doc.setFont("Helvetica", "bold");
+    doc.text("Status Pembayaran:", marginX + 3, currentY);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(inv.status === "Lunas" ? 16 : 225, inv.status === "Lunas" ? 185 : 29, 120);
+    doc.text(inv.status, marginX + 38, currentY);
+
+    doc.setTextColor(15, 23, 42);
+    currentY += 12;
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("RINCIAN NILAI TAGIHAN", marginX, currentY);
+    currentY += 4;
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 6;
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(marginX, currentY, 180, 12, "F");
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("TOTAL BILL TO PAY / NILAI TAGIHAN BRUTO", marginX + 5, currentY + 7.5);
+    doc.setTextColor(37, 99, 235);
+    doc.text(`Rp ${inv.totalBill.toLocaleString("id-ID")}`, 190, currentY + 7.5, { align: "right" });
+
+    currentY += 20;
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Faktur & Tagihan di atas dicatat, divalidasi, dan dimasukkan ke antrean kas keluar secara digital.", marginX, currentY);
+
+    currentY += 25;
+
+    doc.text("Petugas Pembukuan,", marginX + 15, currentY);
+    doc.text("Manager Keuangan / CFO,", marginX + 125, currentY);
+
+    currentY += 18;
+    doc.setFont("Helvetica", "bold");
+    doc.text("[ Finance Executive ]", marginX + 15, currentY);
+    doc.text("[ Controller / CFO ]", marginX + 125, currentY);
+
+    doc.save(`Slip_Invoice_${inv.invoiceNumber}.pdf`);
+  };
+
+  const triggerEmailInvoice = (inv: SupplierInvoice) => {
+    setSelectedInvoiceData(inv);
+    setEmailType("invoice");
+    setEmailSubject(`[TAGIHAN-INVOICE] Slip Tagihan Inv: ${inv.invoiceNumber} (${inv.supplierName})`);
+    setEmailBody(`Yth. Bapak/Ibu Bagian Finance PT Foresyndo,\n\nTerlampir slip verifikasi Invoice hulu masuk untuk segera diproses:\n- Nomor Invoice: ${inv.invoiceNumber}\n- Rujukan PO: ${inv.poNumber}\n- Dari Supplier: ${inv.supplierName}\n- Nilai Nominal Tagihan: Rp ${inv.totalBill.toLocaleString("id-ID")}\n- Status Saat Ini: ${inv.status}\n\nMohon lakukan rekonsiliasi kas keluar & validasi faktur pajak melalui lampiran berkas PDF ini.\n\nHormat kami,\nInternal Accounting - Foresyndo Group`);
+    setEmailAttachmentName(`Slip_Invoice_${inv.invoiceNumber}.pdf`);
+    setShowEmailModal(true);
+  };
+
+  const handleExportReportPDF = (fileType: string, arrayData: any[]) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const marginX = 15;
+    let currentY = 20;
+
+    doc.setFillColor(79, 70, 229);
+    doc.rect(0, 0, 210, 35, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("PT FORESYNDO KONSTRUKSI GROUP", marginX, 13);
+    
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Pusat Informasi & Analisis Sistem Pelaporan Terintegrasi", marginX, 18);
+    doc.text(`Proyek: ${selectedProject?.namaProyek || "BSD Office Tower"}`, marginX, 22);
+
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("LAPORAN AUDIT & MUTASI INTERNAL", 120, 13);
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Jenis Laporan: ${fileType.toUpperCase()}`, 120, 18);
+    doc.text(`Jumlah Baris: ${arrayData.length} entri data`, 120, 22);
+    doc.text(`Tanggal: ${new Date().toLocaleDateString("id-ID")}`, 120, 27);
+
+    currentY = 45;
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`TABEL DETIL REKAPAN DATA (${fileType.toUpperCase()})`, marginX, currentY);
+    currentY += 5;
+    doc.setDrawColor(226, 232, 240);
+    doc.line(marginX, currentY, 195, currentY);
+    currentY += 6;
+
+    arrayData.slice(0, 12).forEach((item, index) => {
+      if (currentY > 265) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(marginX, currentY, 195, currentY);
+
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(8.5);
+      
+      let titleLine = `Baris #${index + 1}: `;
+      let secondaryLine = "";
+
+      if (item.nomorPO) {
+        titleLine += `${item.nomorPO} - Pemasok: ${item.supplierName}`;
+        secondaryLine = `Tgl PO: ${item.date} • Total Belanja: Rp ${item.grandTotal?.toLocaleString("id-ID")} • Status: ${item.status || "Draft"}`;
+      } else if (item.nomorPR) {
+        titleLine += `${item.nomorPR} - Oleh: ${item.requester}`;
+        secondaryLine = `Divisi: ${item.division} • Prioritas: ${item.priority} • Status: ${item.status}`;
+      } else if (item.companyName) {
+        titleLine += `${item.companyName} (${item.code})`;
+        secondaryLine = `PIC: ${item.pic} • Tlpn: ${item.phone} • Alamat: ${item.address}`;
+      } else if (item.invoiceNumber) {
+        titleLine += `Klaim: ${item.invoiceNumber} - Rp ${item.totalBill?.toLocaleString("id-ID")}`;
+        secondaryLine = `Rujuk PO: ${item.poNumber} • Vendor: ${item.supplierName} • Status: ${item.status}`;
+      } else if (item.grNumber) {
+        titleLine += `GR: ${item.grNumber} - Rujuk PO: ${item.poNumber}`;
+        secondaryLine = `Penerima: ${item.receiver} • Kondisi: ${item.condition} • Defisit: ${item.isDeficit ? "YA" : "TIDAK"}`;
+      } else {
+        titleLine += `UID: ${item.id || index}`;
+        secondaryLine = JSON.stringify(item).substring(0, 75);
+      }
+
+      doc.text(titleLine, marginX + 3, currentY + 4);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(secondaryLine, marginX + 3, currentY + 8);
+
+      currentY += 11;
+    });
+
+    currentY += 10;
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("Laporan disahkan secara digital oleh Sistem ERP PT Foresyndo Konstruksi Group.", marginX, currentY);
+
+    doc.save(`Laporan_${fileType}_${selectedProject?.nomorProyek || "PRJ"}.pdf`);
+  };
+
+  const triggerEmailReport = (fileType: string, arrayData: any[]) => {
+    setSelectedReportData({ fileType, arrayData });
+    setEmailType("report");
+    setEmailSubject(`[LAPORAN ERP] Rekapitulasi Data ${fileType.toUpperCase()} - Proyek ${selectedProject?.namaProyek || "FGI"}`);
+    setEmailBody(`Yth. Tim Direksi & Stakeholder PT Foresyndo,\n\nBerikut kami lampirkan berkas penunjang Laporan ${fileType.toUpperCase()} mutasi periodik Proyek: ${selectedProject?.namaProyek || "BSD Office Tower"}.\nJumlah rekaman data terdaftar dalam modul adalah sebanyak ${arrayData.length} entri data.\n\nUnduhan detil lengkap tabel disajikan pada berkas PDF lampiran email ini.\n\nHormat kami,\nSystem Administrator & ERP Audit\nPT Foresyndo Konstruksi Group`);
+    setEmailAttachmentName(`Laporan_${fileType}.pdf`);
+    setShowEmailModal(true);
+  };
+
+  const handleSendEmailSimulated = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSendingEmail(true);
+    setEmailStep("Menghubungkan ke email relay (mail.foresyndo.com)...");
+    
+    setTimeout(() => {
+      setEmailStep("Mengenkripsi berkas penunjang ke base64...");
+      setTimeout(() => {
+        setEmailStep("Membuat lampiran PDF dokumen secara real-time...");
+        setTimeout(() => {
+          setEmailStep("Melakukan handshake SMTP aman & menyalurkan amplop...");
+          setTimeout(() => {
+            setIsSendingEmail(false);
+            setShowEmailModal(false);
+            setEmailStep("");
+            addSysNotify("success", `E-mail berhasil terkirim ke ${emailTo}! berkas lampiran terkirim.`);
+          }, 1000);
+        }, 1000);
+      }, 1000);
+    }, 1000);
   };
 
   // HANDLERS
@@ -704,6 +1276,234 @@ export function EnterprisePurchaseOrder() {
     addSysNotify("success", `Berhasil mengekspor Laporan ${dataName} sebagai format Excel CSV.`);
   };
 
+  // CSV Template generation for Master Data
+  const downloadMasterTemplate = (type: "supplier" | "material" | "jasa") => {
+    let headers = "";
+    let sampleRow = "";
+    
+    if (type === "supplier") {
+      headers = "Kode,Nama Supplier,Nama Perusahaan Resmi,Alamat Gudang,PIC Penanggung Jawab,No HP PIC,Email,NPWP,Bank,Nomor Rekening,Rating,Status Aktif";
+      sampleRow = "SPL-020,Semen Tonasa Utama,PT Semen Tonasa Tbk,Makassar,Ahmad Fadhil,0812-7000-8800,sales@sementonasa.co.id,01.999.888.7,Bank Mandiri,1234567890,5,true";
+    } else if (type === "material") {
+      headers = "Kode,Nama Material,Kategori,Merk,Spesifikasi,Unit/Satuan,Harga Standar,Min Stok,Max Stok";
+      sampleRow = "MAT-120,Baja Tulangan D-16mm,Besi,Krakatau Steel,BJTS 420 Panjang 12m,Batang,225000,100,1000";
+    } else {
+      headers = "Kode,Nama Jasa,Deskripsi Pekerjaan,Unit/Satuan,Tarif Standar";
+      sampleRow = "SRV-120,Pemasangan Rangka Atap Baja Ringan,Sistem galvalum terpasang termasuk tenaga kerja,m2,145000";
+    }
+    
+    const csvContent = "data:text/csv;charset=utf-8," + [headers, sampleRow].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `FGI_Template_${type}_Master.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addSysNotify("success", `Berhasil mengunduh template CSV untuk data ${type}.`);
+  };
+
+  // Robust CSV parser to import multi-category masters
+  const handleImportMasterCSV = (e: React.ChangeEvent<HTMLInputElement>, type: "supplier" | "material" | "jasa") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setImportLogMessage(`Membaca file master ${type}...`);
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) throw new Error("File CSV kosong");
+        
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) throw new Error("File CSV tidak memiliki baris data");
+        
+        // Custom robust CSV split helper that handles quoted strings
+        const splitLine = (l: string) => {
+          const cells: string[] = [];
+          let current = "";
+          let insideQuotes = false;
+          for (let i = 0; i < l.length; i++) {
+            const char = l[i];
+            if (char === '"') {
+              insideQuotes = !insideQuotes;
+            } else if (char === ',' && !insideQuotes) {
+              cells.push(current);
+              current = "";
+            } else {
+              current += char;
+            }
+          }
+          cells.push(current);
+          return cells;
+        };
+        
+        const parsedRows = lines.map(splitLine);
+        
+        // Look for header row index (usually 0) but handle flexibly
+        let headerIndex = -1;
+        for (let i = 0; i < Math.min(parsedRows.length, 3); i++) {
+          const joinedLow = parsedRows[i].join(" ").toLowerCase();
+          if (
+            joinedLow.includes("kode") || 
+            joinedLow.includes("nama") || 
+            joinedLow.includes("code") || 
+            joinedLow.includes("harga") || 
+            joinedLow.includes("price")
+          ) {
+            headerIndex = i;
+            break;
+          }
+        }
+        
+        const startIndex = headerIndex !== -1 ? headerIndex + 1 : 0;
+        let importedCount = 0;
+        
+        const cleanVal = (str: string) => {
+          if (!str) return "";
+          return str.replace(/^"|"$/g, '').trim();
+        };
+
+        const cleanNum = (str: string) => {
+          if (!str) return 0;
+          const cleanStr = str
+            .replace(/^"|"$/g, '')
+            .replace(/Rp\.?/gi, "")
+            .replace(/\./g, "")
+            .replace(/,/g, "")
+            .trim();
+          return parseFloat(cleanStr) || 0;
+        };
+
+        if (type === "supplier") {
+          const newSuppliers: Supplier[] = [];
+          for (let i = startIndex; i < parsedRows.length; i++) {
+            const row = parsedRows[i];
+            if (row.length < 2) continue;
+            
+            const code = cleanVal(row[0]) || `SPL-${Math.floor(100 + Math.random() * 900)}`;
+            const name = cleanVal(row[1]);
+            if (!name) continue;
+            
+            const companyName = cleanVal(row[2]) || name;
+            const address = cleanVal(row[3]) || "Alamat belum diatur";
+            const pic = cleanVal(row[4]) || "PIC Umum";
+            const phone = cleanVal(row[5]) || "-";
+            const email = cleanVal(row[6]) || "-";
+            const npwp = cleanVal(row[7]) || "-";
+            const bank = cleanVal(row[8]) || "Bank Mandiri";
+            const accountNo = cleanVal(row[9]) || "-";
+            const rating = parseInt(cleanVal(row[10])) || 5;
+            const isActive = cleanVal(row[11])?.toLowerCase() !== "false";
+            
+            newSuppliers.push({
+              id: "s-" + Math.random().toString(36).substring(2, 9),
+              code, name, companyName, address, pic, phone, email, npwp, bank, accountNo, rating, isActive
+            });
+            importedCount++;
+          }
+          
+          if (newSuppliers.length > 0) {
+            setSuppliers(prev => {
+              // De-duplicate: don't add code that already exists
+              const existingCodes = new Set(prev.map(s => s.code.toLowerCase()));
+              const filteredNew = newSuppliers.filter(ns => !existingCodes.has(ns.code.toLowerCase()));
+              const updated = [...prev, ...filteredNew];
+              localStorage.setItem("fos_po_suppliers", JSON.stringify(updated));
+              return updated;
+            });
+            addSysNotify("success", `Berhasil mengimpor ${importedCount} supplier Baru.`);
+          }
+        } 
+        else if (type === "material") {
+          const newMaterials: MaterialItem[] = [];
+          for (let i = startIndex; i < parsedRows.length; i++) {
+            const row = parsedRows[i];
+            if (row.length < 2) continue;
+            
+            const code = cleanVal(row[0]) || `MAT-${Math.floor(100 + Math.random() * 900)}`;
+            const name = cleanVal(row[1]);
+            if (!name) continue;
+            
+            const category = cleanVal(row[2]) || "Umum";
+            const brand = cleanVal(row[3]) || "Lokal";
+            const spec = cleanVal(row[4]) || "-";
+            const unit = cleanVal(row[5]) || "Pcs";
+            const standardPrice = cleanNum(row[6]);
+            const minStock = cleanNum(row[7]) || 10;
+            const maxStock = cleanNum(row[8]) || 1000;
+            
+            newMaterials.push({
+              id: "m-" + Math.random().toString(36).substring(2, 9),
+              code, name, category, brand, spec, unit, standardPrice, minStock, maxStock
+            });
+            importedCount++;
+          }
+          
+          if (newMaterials.length > 0) {
+            setMaterials(prev => {
+              const existingCodes = new Set(prev.map(m => m.code.toLowerCase()));
+              const filteredNew = newMaterials.filter(nm => !existingCodes.has(nm.code.toLowerCase()));
+              const updated = [...prev, ...filteredNew];
+              localStorage.setItem("fos_po_materials", JSON.stringify(updated));
+              return updated;
+            });
+            addSysNotify("success", `Berhasil mengimpor ${importedCount} material master ke sistem.`);
+          }
+        } 
+        else if (type === "jasa") {
+          const newServices: ServiceItem[] = [];
+          for (let i = startIndex; i < parsedRows.length; i++) {
+            const row = parsedRows[i];
+            if (row.length < 2) continue;
+            
+            const code = cleanVal(row[0]) || `SRV-${Math.floor(100 + Math.random() * 900)}`;
+            const name = cleanVal(row[1]);
+            if (!name) continue;
+            
+            const description = cleanVal(row[2]) || "-";
+            const unit = cleanVal(row[3]) || "m2";
+            const standardPrice = cleanNum(row[4]);
+            
+            newServices.push({
+              id: "srv-" + Math.random().toString(36).substring(2, 9),
+              code, name, description, unit, standardPrice
+            });
+            importedCount++;
+          }
+          
+          if (newServices.length > 0) {
+            setServices(prev => {
+              const existingCodes = new Set(prev.map(s => s.code.toLowerCase()));
+              const filteredNew = newServices.filter(ns => !existingCodes.has(ns.code.toLowerCase()));
+              const updated = [...prev, ...filteredNew];
+              localStorage.setItem("fos_po_services", JSON.stringify(updated));
+              return updated;
+            });
+            addSysNotify("success", `Berhasil mengimpor ${importedCount} jasa konstruksi master ke sistem.`);
+          }
+        }
+        
+        setImportLogMessage(`Sukses! Mengimpor ${importedCount} data ke Database Master.`);
+        setTimeout(() => setImportLogMessage(""), 5000);
+      } catch (err: any) {
+        setImportLogMessage(`Error impor: ${err.message || err}`);
+        addSysNotify("warning", `Gagal mengimpor file: ${err.message || err}`);
+        setTimeout(() => setImportLogMessage(""), 5000);
+      } finally {
+        e.target.value = "";
+      }
+    };
+    
+    reader.onerror = () => {
+      setImportLogMessage("Gagal membaca file!");
+      setTimeout(() => setImportLogMessage(""), 4000);
+    };
+    
+    reader.readAsText(file, "UTF-8");
+  };
+
   // FILTERED LISTS
   const filteredSuppliers = suppliers.filter(s =>
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -967,12 +1767,64 @@ export function EnterprisePurchaseOrder() {
       {/* ======================= SUB-TAB 2: SUPPLIERS REGISTER ======================= */}
       {activeSubTab === "suppliers" && (
         <div className="space-y-4">
+          {/* Inner Sub-tab Switcher for Master Data Types */}
+          <div className="flex items-center gap-2 border-b border-slate-150 dark:border-slate-800 pb-2">
+            <button
+              onClick={() => {
+                setActiveMasterSubTab("suppliers");
+                setSearchQuery("");
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeMasterSubTab === "suppliers"
+                  ? "bg-blue-600/10 text-blue-600 dark:text-blue-400 font-black shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              <Star className="w-3.5 h-3.5" />
+              <span>Mitra Supplier ({suppliers.length})</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMasterSubTab("materials");
+                setSearchQuery("");
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeMasterSubTab === "materials"
+                  ? "bg-blue-600/10 text-blue-600 dark:text-blue-400 font-black shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              <Package className="w-3.5 h-3.5" />
+              <span>Database Material Master ({materials.length})</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMasterSubTab("services");
+                setSearchQuery("");
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                activeMasterSubTab === "services"
+                  ? "bg-blue-600/10 text-blue-600 dark:text-blue-400 font-black shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              <Hammer className="w-3.5 h-3.5" />
+              <span>Database Jasa/Subkon ({services.length})</span>
+            </button>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
             <div className="relative w-full sm:w-72">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Cari kode, nama, perusahaan..."
+                placeholder={
+                  activeMasterSubTab === "suppliers" 
+                    ? "Cari kode, nama, perusahaan..." 
+                    : activeMasterSubTab === "materials" 
+                      ? "Cari kode, nama material, brand..." 
+                      : "Cari kode, nama jasa, deskripsi..."
+                }
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-850 p-2 pl-9 text-xs border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -980,138 +1832,426 @@ export function EnterprisePurchaseOrder() {
             </div>
             
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button
+                onClick={() => {
+                  setImportMasterType(
+                    activeMasterSubTab === "suppliers" ? "supplier" : activeMasterSubTab === "materials" ? "material" : "jasa"
+                  );
+                  setShowMasterImport(!showMasterImport);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg cursor-pointer transition ${
+                  showMasterImport 
+                    ? "bg-amber-600 text-white" 
+                    : "bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-xs"
+                }`}
+              >
+                <FileUp className="w-3.5 h-3.5" />
+                <span>Import Master CSV</span>
+              </button>
               <button 
-                onClick={() => exportToCSV("Supplier", suppliers)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs text-slate-700 dark:text-slate-300 font-bold rounded-lg cursor-pointer"
+                onClick={() => {
+                  if (activeMasterSubTab === "suppliers") {
+                    exportToCSV("Supplier", suppliers);
+                  } else if (activeMasterSubTab === "materials") {
+                    exportToCSV("Materials", materials);
+                  } else {
+                    exportToCSV("Jasa_Services", services);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-880 dark:hover:bg-slate-700 text-xs text-slate-700 dark:text-slate-300 font-bold rounded-lg cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Export Excel</span>
+                <span>Export Excel / CSV</span>
               </button>
-              <button 
-                onClick={() => setShowAddSupplier(!showAddSupplier)}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg cursor-pointer shadow-xs"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Tambah Supplier</span>
-              </button>
+              {activeMasterSubTab === "suppliers" && (
+                <button 
+                  onClick={() => setShowAddSupplier(!showAddSupplier)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Tambah Supplier</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Add Supplier Form Pop-up */}
-          {showAddSupplier && (
-            <form onSubmit={handleCreateSupplier} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-xl shadow-md space-y-4 animate-fade-in text-xs text-left">
-              <h3 className="text-xs font-black uppercase text-slate-400 font-mono border-b pb-2 mb-3">Registrasi Supplier Baru</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <input 
-                  type="text" placeholder="Nama Supplier (Contoh: Krakatau Steel)" required
-                  value={newSup.name} onChange={(e) => setNewSup({ ...newSup, name: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="text" placeholder="Nama Perusahaan Resmi (PT / CV)" required
-                  value={newSup.companyName} onChange={(e) => setNewSup({ ...newSup, companyName: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="text" placeholder="PIC Penanggung Jawab"
-                  value={newSup.pic} onChange={(e) => setNewSup({ ...newSup, pic: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="text" placeholder="No HP PIC"
-                  value={newSup.phone} onChange={(e) => setNewSup({ ...newSup, phone: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="email" placeholder="Email Kantor"
-                  value={newSup.email} onChange={(e) => setNewSup({ ...newSup, email: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="text" placeholder="NPWP Badan Usaha"
-                  value={newSup.npwp} onChange={(e) => setNewSup({ ...newSup, npwp: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
-                <input 
-                  type="text" placeholder="Alamat Gudang / Kantor"
-                  value={newSup.address} onChange={(e) => setNewSup({ ...newSup, address: e.target.value })}
-                  className="p-2 border border-slate-200 dark:border-slate-800 rounded md:col-span-3 bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
-                />
+          {/* CSV Master Data Importer panel */}
+          {showMasterImport && (
+            <div className="bg-slate-50 dark:bg-slate-950 border-2 border-dashed border-amber-500/30 p-5 rounded-xl space-y-4 text-left animate-fade-in text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b dark:border-slate-850 pb-3 gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+                    <FileUp className="w-4 h-4 text-amber-500 animate-pulse" />
+                    <span>Import Wizard Master Data via CSV</span>
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                    Unggah file CSV master atau unduh template untuk setup data masal instan.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-semibold font-mono shrink-0">Pilih Kategori Impor:</span>
+                  <select
+                    value={importMasterType}
+                    onChange={(e) => setImportMasterType(e.target.value as any)}
+                    className="p-1 px-2 border border-slate-200 dark:border-slate-800 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-white text-xs font-bold focus:outline-none"
+                  >
+                    <option value="supplier">🏢 Mitra Supplier & Vendor</option>
+                    <option value="material">📦 Database Material Master</option>
+                    <option value="jasa">⚙️ Database Jasa Konstruksi</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowAddSupplier(false)} className="px-3.5 py-2 border rounded hover:bg-slate-100 text-slate-600 dark:text-slate-300">Batal</button>
-                <button type="submit" className="px-5 py-2 bg-blue-600 text-white rounded font-bold shadow">Simpan Vendor</button>
+
+              {/* Template download and info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="bg-white dark:bg-slate-900 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
+                  <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5 uppercase font-mono text-[10px] text-blue-500">
+                    <span>1. Unduh File Contoh (Template)</span>
+                  </h4>
+                  <p className="text-slate-500 text-[11px]">
+                    Gunakan file CSV template standar agar sistem kami dapat memetakan kolom secara otomatis dengan sempurna.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => downloadMasterTemplate(importMasterType)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-xs cursor-pointer mt-2"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Template CSV - {importMasterType.toUpperCase()}</span>
+                  </button>
+                </div>
+
+                <div className="bg-white dark:bg-slate-900 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
+                  <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5 uppercase font-mono text-[10px] text-emerald-500">
+                    <span>2. Unggah File CSV Anda</span>
+                  </h4>
+                  <p className="text-slate-500 text-[11px]">
+                    Pilih file CSV yang sudah diisi data master baru di perangkat Anda untuk diimpor masal.
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={(e) => handleImportMasterCSV(e, importMasterType)}
+                      className="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-emerald-500/10 file:text-emerald-500 hover:file:bg-emerald-500/20 file:cursor-pointer"
+                    />
+                  </div>
+                </div>
               </div>
-            </form>
+
+              {/* Status logger or warning notifications inside wizard */}
+              {importLogMessage && (
+                <div className={`p-3 rounded-lg border text-xs font-semibold ${
+                  importLogMessage.toLowerCase().includes("sukses") || importLogMessage.toLowerCase().includes("berhasil")
+                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                    : "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>{importLogMessage}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Field mapping documentation section to ensure perfect user execution */}
+              <div className="bg-slate-100 dark:bg-slate-900/60 p-3 rounded-lg font-mono text-[9.5px] text-slate-500 dark:text-slate-400 space-y-1">
+                <div className="font-bold uppercase text-slate-600 dark:text-slate-300 border-b dark:border-slate-800 pb-1 mb-1.5 flex items-center gap-1">
+                  <span>Panduan Kolom / Tata Cara Format:</span>
+                </div>
+                {importMasterType === "supplier" ? (
+                  <>
+                    <div>• <strong>Kolom (12 buah):</strong> Kode, Nama Supplier, Nama Perusahaan, Alamat, PIC, No HP, Email, NPWP, Bank, Rekening, Rating (1-5), Aktif (true/false)</div>
+                    <div>• <strong>Contoh baris data:</strong> SPL-050,Mega Baja Sentosa,PT Mega Baja,Surabaya,Kevin Setiawan,08123-333,sales@megabaja.co.id,01.242,BCA,823876,5,true</div>
+                  </>
+                ) : importMasterType === "material" ? (
+                  <>
+                    <div>• <strong>Kolom (9 buah):</strong> Kode, Nama Material, Kategori, Merk, Spesifikasi, Satuan/Unit, Harga Standar, Minimum Stock, Maksimum Stock</div>
+                    <div>• <strong>Contoh baris data:</strong> MAT-050,Pipa PVC Rucika 4 Inch,Paralon,Rucika,Tipe AW Tebal,Batang,125000,50,500</div>
+                  </>
+                ) : (
+                  <>
+                    <div>• <strong>Kolom (5 buah):</strong> Kode, Nama Jasa Pekerjaan, Rincian Deskripsi, Satuan/Unit, Tarif Standar Rupiah</div>
+                    <div>• <strong>Contoh baris data:</strong> SRV-050,Pemasangan Keramik Lantai 60x60,Pasang keramik granit termasuk semen & adukan,m2,75000</div>
+                  </>
+                )}
+                <div className="text-amber-500 font-bold dark:text-amber-400 mt-1.5 flex items-center gap-1">
+                  <span>💡 Tips: Sistem akan melakukan de-duplikasi otomatis untuk Kode yang sudah terdaftar sebelumnya agar tidak terjadi bentrok data.</span>
+                </div>
+              </div>
+            </div>
           )}
 
-          {/* Suppliers list Table */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-mono uppercase text-[9.5px] border-b border-slate-150 dark:border-slate-850">
-                  <tr>
-                    <th className="p-3">Kode</th>
-                    <th className="p-3">Nama Perusahaan</th>
-                    <th className="p-3">PIC / Kontak</th>
-                    <th className="p-3">Email / NPWP</th>
-                    <th className="p-3">Rating Kendala</th>
-                    <th className="p-3 text-center">Status</th>
-                    <th className="p-3 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                  {filteredSuppliers.map((sup) => (
-                    <tr key={sup.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20 text-slate-750 dark:text-slate-200">
-                      <td className="p-3 font-mono font-bold text-blue-600 dark:text-blue-400">{sup.code}</td>
-                      <td className="p-3">
-                        <span className="block font-bold text-slate-900 dark:text-white">{sup.name}</span>
-                        <span className="text-[10px] text-slate-400">{sup.companyName}</span>
-                      </td>
-                      <td className="p-3">
-                        <span className="block">{sup.pic}</span>
-                        <span className="text-[10px] text-slate-400">{sup.phone}</span>
-                      </td>
-                      <td className="p-3">
-                        <span className="block text-slate-500">{sup.email}</span>
-                        <span className="text-[9px] font-mono text-slate-400">{sup.npwp}</span>
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center space-x-0.5">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Star 
-                              key={i} 
-                              className={`w-3.5 h-3.5 ${
-                                i < sup.rating ? "fill-amber-500 text-amber-500" : "text-slate-200 dark:text-slate-800"
-                              }`} 
-                            />
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[9.5px] font-bold uppercase font-mono ${
-                          sup.isActive ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
-                        }`}>
-                          {sup.isActive ? "Aktif" : "Non-Aktif"}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <button 
-                          onClick={() => {
-                            setSuppliers(prev => prev.filter(s => s.id !== sup.id));
-                            addSysNotify("warning", `Vendor ${sup.companyName} dihapus dari register.`);
-                          }}
-                          className="text-slate-400 hover:text-rose-500 p-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
+          {/* ======================= SUB-SUB TAB: SUPPLIERS ======================= */}
+          {activeMasterSubTab === "suppliers" && (
+            <>
+              {/* Add Supplier Form Pop-up */}
+              {showAddSupplier && (
+                <form onSubmit={handleCreateSupplier} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-xl shadow-md space-y-4 animate-fade-in text-xs text-left">
+                  <h3 className="text-xs font-black uppercase text-slate-400 font-mono border-b pb-2 mb-3">Registrasi Supplier Baru</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input 
+                      type="text" placeholder="Nama Supplier (Contoh: Krakatau Steel)" required
+                      value={newSup.name} onChange={(e) => setNewSup({ ...newSup, name: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="text" placeholder="Nama Perusahaan Resmi (PT / CV)" required
+                      value={newSup.companyName} onChange={(e) => setNewSup({ ...newSup, companyName: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="text" placeholder="PIC Penanggung Jawab"
+                      value={newSup.pic} onChange={(e) => setNewSup({ ...newSup, pic: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="text" placeholder="No HP PIC"
+                      value={newSup.phone} onChange={(e) => setNewSup({ ...newSup, phone: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="email" placeholder="Email Kantor"
+                      value={newSup.email} onChange={(e) => setNewSup({ ...newSup, email: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="text" placeholder="NPWP Badan Usaha"
+                      value={newSup.npwp} onChange={(e) => setNewSup({ ...newSup, npwp: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                    <input 
+                      type="text" placeholder="Alamat Gudang / Kantor"
+                      value={newSup.address} onChange={(e) => setNewSup({ ...newSup, address: e.target.value })}
+                      className="p-2 border border-slate-200 dark:border-slate-800 rounded md:col-span-3 bg-slate-50 dark:bg-slate-850 text-slate-800 dark:text-white"
+                    />
+                  </div>
+                  <div className="flex justify-end space-x-2">
+                    <button type="button" onClick={() => setShowAddSupplier(false)} className="px-3.5 py-2 border rounded hover:bg-slate-100 text-slate-600 dark:text-slate-300">Batal</button>
+                    <button type="submit" className="px-5 py-2 bg-blue-600 text-white rounded font-bold shadow">Simpan Vendor</button>
+                  </div>
+                </form>
+              )}
+
+              {/* Suppliers list Table */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-mono uppercase text-[9.5px] border-b border-slate-150 dark:border-slate-850">
+                      <tr>
+                        <th className="p-3">Kode</th>
+                        <th className="p-3">Nama Perusahaan</th>
+                        <th className="p-3">PIC / Kontak</th>
+                        <th className="p-3">Email / NPWP</th>
+                        <th className="p-3 font-semibold">Kualitas/Rating</th>
+                        <th className="p-3 text-center font-semibold">Status</th>
+                        <th className="p-3 text-right font-semibold">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                      {filteredSuppliers.map((sup) => (
+                        <tr key={sup.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20 text-slate-755 dark:text-slate-200">
+                          <td className="p-3 font-mono font-bold text-blue-600 dark:text-blue-400">{sup.code}</td>
+                          <td className="p-3">
+                            <span className="block font-bold text-slate-900 dark:text-white">{sup.name}</span>
+                            <span className="text-[10px] text-slate-400">{sup.companyName}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className="block">{sup.pic}</span>
+                            <span className="text-[10px] text-slate-400">{sup.phone}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className="block text-slate-500">{sup.email}</span>
+                            <span className="text-[9px] font-mono text-slate-400">{sup.npwp}</span>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center space-x-0.5">
+                              {Array.from({ length: 5 }).map((_, i) => (
+                                <Star 
+                                  key={i} 
+                                  className={`w-3.5 h-3.5 ${
+                                    i < sup.rating ? "fill-amber-500 text-amber-500" : "text-slate-250 dark:text-slate-800"
+                                  }`} 
+                                />
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <span className={`inline-block px-2 py-0.5 rounded text-[9.5px] font-bold uppercase font-mono ${
+                              sup.isActive ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
+                            }`}>
+                              {sup.isActive ? "Aktif" : "Non-Aktif"}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button 
+                              onClick={() => {
+                                setSuppliers(prev => prev.filter(s => s.id !== sup.id));
+                                addSysNotify("warning", `Vendor ${sup.companyName} dihapus dari register.`);
+                              }}
+                              className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredSuppliers.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-8 text-center text-slate-400 font-mono text-xs">
+                            Tidak ditemukan data supplier master. Anda bisa impor melalui CSV.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ======================= SUB-SUB TAB: MATERIALS ======================= */}
+          {activeMasterSubTab === "materials" && (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-mono uppercase text-[9.5px] border-b border-slate-150 dark:border-slate-850">
+                    <tr>
+                      <th className="p-3">Kode Material</th>
+                      <th className="p-3">Nama Material / Spesifikasi</th>
+                      <th className="p-3">Kategori</th>
+                      <th className="p-3">Merk / Brand</th>
+                      <th className="p-3 text-right">Harga Satuan</th>
+                      <th className="p-3 text-center">Satuan</th>
+                      <th className="p-3 text-center">Batas Stok (Min/Max)</th>
+                      <th className="p-3 text-right">Aksi</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                    {materials
+                      .filter(m => 
+                        m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        m.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        m.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        m.brand.toLowerCase().includes(searchQuery.toLowerCase())
+                      )
+                      .map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20 text-slate-755 dark:text-slate-200">
+                          <td className="p-3 font-mono font-bold text-amber-600 dark:text-amber-400">{m.code}</td>
+                          <td className="p-3">
+                            <span className="block font-bold text-slate-900 dark:text-white">{m.name}</span>
+                            <span className="text-[10px] text-slate-400">{m.spec || "-"}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded text-[10px] font-bold uppercase font-mono">
+                              {m.category}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-500">{m.brand || "Lokal / Multi"}</td>
+                          <td className="p-3 text-right font-mono font-bold text-slate-800 dark:text-teal-400">
+                            Rp {m.standardPrice.toLocaleString("id-ID")}
+                          </td>
+                          <td className="p-3 text-center font-bold text-slate-500 font-mono">{m.unit}</td>
+                          <td className="p-3 text-center text-[10px] font-mono text-slate-400">
+                            <span className="text-rose-500 font-bold">{m.minStock}</span> / <span className="text-blue-500 font-bold">{m.maxStock}</span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => {
+                                setMaterials(prev => {
+                                  const updated = prev.filter(item => item.id !== m.id);
+                                  localStorage.setItem("fos_po_materials", JSON.stringify(updated));
+                                  return updated;
+                                });
+                                addSysNotify("warning", `Material master ${m.name} dihapus dari register database.`);
+                              }}
+                              className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    {materials.filter(m => 
+                        m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        m.code.toLowerCase().includes(searchQuery.toLowerCase())
+                      ).length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="p-8 text-center text-slate-400 font-mono text-xs">
+                            Tidak ditemukan data material master. Silakan klik "Import Master CSV" di atas untuk menambahkan masal.
+                          </td>
+                        </tr>
+                      )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* ======================= SUB-SUB TAB: SERVICES ======================= */}
+          {activeMasterSubTab === "services" && (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-mono uppercase text-[9.5px] border-b border-slate-150 dark:border-slate-850">
+                    <tr>
+                      <th className="p-3">Kode Pekerjaan</th>
+                      <th className="p-3">Nama Jasa / Kategori Pekerjaan</th>
+                      <th className="p-3">Rincian Deskripsi</th>
+                      <th className="p-3 text-center font-semibold">Satuan/Unit</th>
+                      <th className="p-3 text-right">Tarif / Harga Standar</th>
+                      <th className="p-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                    {services
+                      .filter(s => 
+                        s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        s.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        s.description.toLowerCase().includes(searchQuery.toLowerCase())
+                      )
+                      .map((s) => (
+                        <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20 text-slate-755 dark:text-slate-200">
+                          <td className="p-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">{s.code}</td>
+                          <td className="p-3">
+                            <span className="block font-bold text-slate-900 dark:text-white">{s.name}</span>
+                          </td>
+                          <td className="p-3 text-slate-500 max-w-xs truncate">{s.description || "-"}</td>
+                          <td className="p-3 text-center font-bold text-slate-500 font-mono">{s.unit}</td>
+                          <td className="p-3 text-right font-mono font-bold text-slate-800 dark:text-teal-450">
+                            Rp {s.standardPrice.toLocaleString("id-ID")}
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => {
+                                setServices(prev => {
+                                  const updated = prev.filter(item => item.id !== s.id);
+                                  localStorage.setItem("fos_po_services", JSON.stringify(updated));
+                                  return updated;
+                                });
+                                addSysNotify("warning", `Jasa master ${s.name} dihapus dari register database.`);
+                              }}
+                              className="text-slate-400 hover:text-rose-500 p-1 cursor-pointer transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    {services.filter(s => 
+                        s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        s.code.toLowerCase().includes(searchQuery.toLowerCase())
+                      ).length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-slate-400 font-mono text-xs">
+                            Tidak ditemukan data jasa / subkontraktor. Silakan klik "Import Master CSV" di atas untuk menambahkan masal.
+                          </td>
+                        </tr>
+                      )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1318,7 +2458,25 @@ export function EnterprisePurchaseOrder() {
                     Banding Penawaran: {comp.itemName} ({comp.qty} Unit)
                   </h4>
                 </div>
-                <span className="text-[11px] font-mono text-slate-400">Total Penawaran: <strong>3 Pemasok</strong></span>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button 
+                    onClick={() => handleExportComparisonPDF(comp)}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/30 dark:hover:bg-rose-900/30 dark:text-rose-450 text-[10.5px] font-mono font-extrabold rounded-lg flex items-center gap-1 transition cursor-pointer"
+                    title="Export Evaluasi Banding Penawaran ke PDF"
+                  >
+                    <Download className="w-3 h-3 text-rose-500" />
+                    <span>Cetak PDF</span>
+                  </button>
+                  <button 
+                    onClick={() => triggerEmailComparison(comp)}
+                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:hover:bg-blue-900/30 dark:text-blue-450 text-[10.5px] font-mono font-extrabold rounded-lg flex items-center gap-1 transition cursor-pointer"
+                    title="Kirim Evaluasi Penawaran lewat Email"
+                  >
+                    <Send className="w-3 h-3 text-blue-500" />
+                    <span>Kirim Email</span>
+                  </button>
+                  <span className="text-[11px] font-mono text-slate-400 hidden sm:inline ml-2">Total: <strong>3 Vendor</strong></span>
+                </div>
               </div>
 
               {/* Side by side supplier offer visual comparison mapping */}
@@ -1400,6 +2558,14 @@ export function EnterprisePurchaseOrder() {
             
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button 
+                onClick={() => setShowPOImport(!showPOImport)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-purple-650 hover:bg-purple-700 text-white text-xs font-bold rounded-lg cursor-pointer transition"
+                title="Impor PO dari file CSV"
+              >
+                <FileUp className="w-3.5 h-3.5" />
+                <span>Impor CSV PO</span>
+              </button>
+              <button 
                 onClick={handlePOSlowStockAuto}
                 className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-lg cursor-pointer animate-pulse"
                 title="Sistem logistik cerdas auto low-stock trigger"
@@ -1416,6 +2582,42 @@ export function EnterprisePurchaseOrder() {
               </button>
             </div>
           </div>
+
+          {/* CSV IMPORT PO DROPZONE PANEL */}
+          {showPOImport && (
+            <div className="bg-purple-500/5 border border-purple-500/20 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 text-xs animate-in slide-in-from-top-6 text-left">
+              <div className="space-y-1 text-left">
+                <h3 className="font-bold text-slate-850 dark:text-purple-400 flex items-center gap-1.5 uppercase font-mono tracking-wider">
+                  <FileUp className="w-4 h-4 text-purple-600" />
+                  Impor Massal Purchase Orders (PO) via CSV
+                </h3>
+                <p className="text-slate-500">
+                  Unggah file CSV dengan kolom header standar: <strong className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10.5px]">Nomor PO, Tanggal PO, Pemasok, Metode Pembayaran, Alamat Pengiriman, Kode Material, Nama Material ...</strong>
+                </p>
+                {poImportLog && (
+                  <p className="text-xs font-mono font-bold text-purple-600 dark:text-purple-400 animate-pulse mt-2">{poImportLog}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                <button
+                  type="button"
+                  onClick={downloadPOTemplate}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-850 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-xl transition cursor-pointer"
+                >
+                  Unduh Template CSV
+                </button>
+                <label className="px-5 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white font-extrabold rounded-xl transition cursor-pointer shadow-sm relative overflow-hidden">
+                  <span>Pilih File CSV...</span>
+                  <input 
+                    type="file" 
+                    accept=".csv" 
+                    onChange={handleImportPOCSV} 
+                    className="absolute inset-0 opacity-0 cursor-pointer" 
+                  />
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Add PO Manual */}
           {showAddPOManual && (
