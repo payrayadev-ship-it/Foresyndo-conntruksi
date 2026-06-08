@@ -176,6 +176,7 @@ export const initialDocuments: Record<string, DocumentRecord[]> = {
       version: "v1.0", 
       status: "Pending Approval", 
       createdAt: "2026-06-02",
+      dueDate: "2026-06-10",
       comments: [
         {
           id: "c-1",
@@ -208,6 +209,36 @@ export const initialDocuments: Record<string, DocumentRecord[]> = {
           changedByRole: "Project Manager",
           timestamp: "2026-06-02 14:35",
           note: "RFI diajukan ke Direksi dan Owner untuk review lanjut"
+        }
+      ]
+    },
+    {
+      id: "doc-04",
+      projectId: "proj-001",
+      name: "RFI-13: Klarifikasi Elevasi Struktur Pondasi Bor Pile.pdf",
+      category: "RFI",
+      url: "#",
+      version: "v1.1",
+      status: "Pending Approval",
+      createdAt: "2026-05-30",
+      dueDate: "2026-06-05",
+      comments: [
+        {
+          id: "c-3",
+          authorName: "Ir. Doni",
+          authorRole: "Project Manager",
+          text: "Elevasi tanah dasar aktual di lapangan terpaut -1.2m lebih rendah dari gambar rencana. Perlu instruksi apakah kedalaman tiang ditambah.",
+          timestamp: "2026-05-30 15:00"
+        }
+      ],
+      statusHistory: [
+        {
+          id: "h-3",
+          status: "Pending Approval",
+          changedBy: "Ir. Doni",
+          changedByRole: "Project Manager",
+          timestamp: "2026-05-30 15:05",
+          note: "RFI dikirim ke Konsultan Pengawas MK"
         }
       ]
     }

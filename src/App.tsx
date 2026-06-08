@@ -110,6 +110,7 @@ function AppContent() {
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [newDocName, setNewDocName] = useState("");
   const [newDocCategory, setNewDocCategory] = useState<"Kontrak" | "Shop Drawing" | "As Built Drawing" | "RFI" | "Metode Kerja" | "Laporan Harian">("Kontrak");
+  const [newDocDueDate, setNewDocDueDate] = useState("");
 
   const [selectedRFIDocId, setSelectedRFIDocId] = useState<string | null>(null);
   const [newCommentText, setNewCommentText] = useState("");
@@ -545,9 +546,11 @@ function AppContent() {
       category: newDocCategory,
       url: "#",
       version: "v1.0",
-      status: "Pending Approval"
+      status: "Pending Approval",
+      dueDate: newDocCategory === "RFI" ? newDocDueDate || undefined : undefined
     });
     setNewDocName("");
+    setNewDocDueDate("");
     setShowAddDoc(false);
   };
 
@@ -560,6 +563,21 @@ function AppContent() {
       case "Mendung": return <Cloud className="w-4 h-4 text-slate-400" />;
       default: return <Sun className="w-4 h-4 text-amber-500" />;
     }
+  };
+
+  // Helper to compute remaining days for RFI Due Date
+  const getRFIDeadlineInfo = (dueDate?: string) => {
+    if (!dueDate) return null;
+    const target = new Date(dueDate);
+    const today = new Date("2026-06-08"); // Using consistent contextual current date matching additional metadata
+    
+    // Reset times for accurate day-by-day comparison
+    target.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    
+    const diffTime = target.getTime() - today.getTime();
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
   };
 
   // Simple clean mock PDF exporter
@@ -1915,7 +1933,7 @@ function AppContent() {
                 </div>
 
                 {showAddDoc && (
-                  <form onSubmit={handleCreateDocSubmit} className="bg-slate-50 dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 rounded-xl mb-6 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                  <form onSubmit={handleCreateDocSubmit} className="bg-slate-50 dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 rounded-xl mb-6 grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold text-slate-400 mb-1">Nama Dokumen File PDF</label>
                       <input
@@ -1932,7 +1950,7 @@ function AppContent() {
                       <select
                         value={newDocCategory}
                         onChange={(e) => setNewDocCategory(e.target.value as any)}
-                        className="w-full bg-white dark:bg-slate-900 p-2 rounded focus:outline-none"
+                        className="w-full bg-white dark:bg-slate-900 p-2 rounded focus:outline-none border border-slate-200 dark:border-slate-700"
                       >
                         <option value="Kontrak">Kontrak Pemborongan</option>
                         <option value="Shop Drawing">Shop Drawing</option>
@@ -1941,6 +1959,22 @@ function AppContent() {
                         <option value="Metode Kerja">Metode Kerja Lapangan</option>
                         <option value="Laporan Harian">Laporan Harian</option>
                       </select>
+                    </div>
+                    <div>
+                      {newDocCategory === "RFI" ? (
+                        <>
+                          <label className="block text-[10px] font-bold text-amber-500 mb-1">Batas Waktu (Due Date)</label>
+                          <input
+                            type="date"
+                            value={newDocDueDate}
+                            onChange={(e) => setNewDocDueDate(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded p-1.5 focus:ring-1 focus:ring-amber-500 font-mono font-semibold"
+                            required
+                          />
+                        </>
+                      ) : (
+                        <div className="hidden sm:block"></div>
+                      )}
                     </div>
                     <div className="flex flex-col justify-end">
                       <button
@@ -1973,10 +2007,48 @@ function AppContent() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-650 dark:text-slate-300">
-                            {documents.map((d) => (
-                              <tr key={d.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/10 ${selectedRFIDocId === d.id ? "bg-slate-50/70 dark:bg-slate-800/40 border-l-2 border-blue-500" : ""}`}>
-                                <td className="py-3 px-4 font-semibold text-slate-800 dark:text-slate-200 leading-normal">
-                                  <div className="font-sans font-bold">{d.name}</div>
+                            {documents.map((d) => {
+                              const daysRemaining = d.category === "RFI" && d.dueDate ? getRFIDeadlineInfo(d.dueDate) : null;
+                              let rowHighlightClass = "hover:bg-slate-50/50 dark:hover:bg-slate-800/10";
+                              
+                              if (selectedRFIDocId === d.id) {
+                                rowHighlightClass = "bg-slate-50/70 dark:bg-slate-800/40 border-l-2 border-blue-500";
+                              } else if (daysRemaining !== null) {
+                                if (daysRemaining < 0) {
+                                  rowHighlightClass = "bg-red-500/5 dark:bg-red-950/20 hover:bg-red-500/10 border-l-2 border-red-500";
+                                } else if (daysRemaining <= 3) {
+                                  rowHighlightClass = "bg-amber-500/5 dark:bg-amber-950/20 hover:bg-amber-500/10 border-l-2 border-amber-500";
+                                }
+                              }
+
+                              return (
+                                <tr key={d.id} className={rowHighlightClass}>
+                                  <td className="py-3 px-4 font-semibold text-slate-800 dark:text-slate-200 leading-normal">
+                                    <div className="font-sans font-bold flex items-center gap-2 flex-wrap">
+                                      <span>{d.name}</span>
+                                      {d.category === "RFI" && d.dueDate && (() => {
+                                        if (daysRemaining === null) return null;
+                                        if (daysRemaining < 0) {
+                                          return (
+                                            <span className="px-2 py-0.5 bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400 text-[10px] font-black rounded flex items-center gap-1 border border-red-200 dark:border-red-900/30 uppercase tracking-wide animate-pulse">
+                                              ⚠️ Terlambat {-daysRemaining} Hari
+                                            </span>
+                                          );
+                                        } else if (daysRemaining <= 3) {
+                                          return (
+                                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-450 text-[10px] font-extrabold rounded flex items-center gap-1 border border-amber-200 dark:border-amber-900/30 animate-pulse">
+                                              ⏰ Due: {daysRemaining === 0 ? "Hari Ini" : `${daysRemaining} Hari`}
+                                            </span>
+                                          );
+                                        } else {
+                                          return (
+                                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 dark:bg-slate-850 dark:text-slate-300 text-[10px] font-semibold rounded flex items-center gap-1 border border-slate-200 dark:border-slate-800">
+                                              📅 Due: {d.dueDate}
+                                            </span>
+                                          );
+                                        }
+                                      })()}
+                                    </div>
                                   {d.category === "RFI" && (
                                     <div className="flex items-center space-x-2 mt-1 text-[10px] text-slate-500 font-mono font-medium">
                                       <span className="flex items-center text-blue-600 dark:text-blue-400">
@@ -2041,7 +2113,8 @@ function AppContent() {
                                   )}
                                 </td>
                               </tr>
-                            ))}
+                            );
+                          })}
                           </tbody>
                         </table>
                       </div>

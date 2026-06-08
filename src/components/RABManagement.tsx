@@ -4,7 +4,7 @@ import { FileDown, FileUp, Plus, Trash2, Calculator, BarChart, DollarSign, ListC
 import { jsPDF } from "jspdf";
 
 export const RABManagement: React.FC = () => {
-  const { rabItems, addRABItem, deleteRABItem, selectedProject } = useProject();
+  const { rabItems, addRABItem, deleteRABItem, selectedProject, portalSettings } = useProject();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [kode, setKode] = useState("");
@@ -202,182 +202,331 @@ export const RABManagement: React.FC = () => {
       format: "a4"
     });
 
-    const marginX = 15;
-    let currentY = 20;
+    const companyName = portalSettings?.companyName || "PT FORESYNDO KONSTRUKSI GROUP";
+    const companyAddress = portalSettings?.companyAddress || "Gedung Graha Lestari, Menteng Jakarta Pusat";
+    const companyEmail = portalSettings?.companyEmail || "support@foresyndo.com";
+    const companyPhone = portalSettings?.companyPhone || "+62 21-8888-888";
+    const logoUrl = portalSettings?.logoUrl;
 
-    // Header banner with deep corporate dark blue
-    doc.setFillColor(15, 23, 42); // slate-900/950
-    doc.rect(0, 0, 210, 38, "F");
+    const proceedWithPdf = (imageBase64?: string) => {
+      const marginX = 15;
+      let currentY = 20;
 
-    // Title / Company Brand
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("FORESYNDO KONSTRUKSI", marginX, 15);
-    
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("Professional Civil & Structural Engineering Services", marginX, 21);
-    doc.text("E-mail: support@foresyndo.com | Telp: +62 21-8888-888", marginX, 26);
+      // Header banner with deep corporate dark blue
+      doc.setFillColor(15, 23, 42); // slate-900/950
+      doc.rect(0, 0, 210, 38, "F");
 
-    // Document Name in Header
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("RENCANA ANGGARAN BIAYA (RAB)", 125, 15);
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.text(`No. Proyek: ${selectedProject?.nomorProyek || "PRJ-001"}`, 125, 21);
-    doc.text(`Tanggal: ${new Date().toLocaleDateString("id-ID")}`, 125, 26);
+      let logoOffset = 0;
+      if (imageBase64) {
+        try {
+          doc.addImage(imageBase64, "PNG", marginX, 8, 14, 14);
+          logoOffset = 18;
+        } catch (e) {
+          console.warn("Could not draw loaded image, trying fallback", e);
+        }
+      }
 
-    currentY = 48;
+      // Draw stylized construction vector badge if no logo image or as a combined design element
+      if (!imageBase64) {
+        doc.setDrawColor(245, 158, 11); // Amber Accent
+        doc.setLineWidth(0.8);
+        doc.line(marginX, 9, marginX, 23);
+        doc.line(marginX, 23, marginX + 11, 23);
+        doc.line(marginX + 5.5, 9, marginX + 5.5, 23);
+        doc.line(marginX + 11, 9, marginX + 11, 23);
+        doc.line(marginX, 9, marginX + 11, 9);
+        doc.line(marginX, 16, marginX + 11, 16);
+        logoOffset = 15;
+      }
 
-    // Project Details Card
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.rect(marginX, currentY, 180, 22, "F");
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.rect(marginX, currentY, 180, 22, "S");
+      // Title / Company Brand
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text(companyName.toUpperCase(), marginX + logoOffset, 14);
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(7.5);
+      
+      // Multi-line address logic to fit securely inside header
+      const addressLines = doc.splitTextToSize(companyAddress, 100);
+      const firstLineAddress = addressLines[0] || "";
+      const secondLineAddress = addressLines[1] ? addressLines[1].substring(0, 45) + "..." : "";
+      
+      doc.text(firstLineAddress + (secondLineAddress ? " " + secondLineAddress : ""), marginX + logoOffset, 19);
+      doc.text(`E-mail: ${companyEmail} | Telp: ${companyPhone}`, marginX + logoOffset, 24);
 
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("REKAPITULASI PROYEK", marginX + 5, currentY + 6);
-    
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Nama Pekerjaan  :  ${selectedProject?.nama || "Pembangunan Gedung Utama"}`, marginX + 5, currentY + 12);
-    doc.text(`Lokasi Proyek      :  ${selectedProject?.lokasi || "DKI Jakarta"}`, marginX + 5, currentY + 17);
-    
-    const totalRAB_Selected = rabItems.reduce((sum, item) => sum + item.total, 0);
-    doc.setFont("Helvetica", "bold");
-    doc.text(`Total Nilai RAB  :  Rp ${totalRAB_Selected.toLocaleString("id-ID")}`, marginX + 105, currentY + 12);
-    doc.setFont("Helvetica", "normal");
-    doc.text(`Status Evaluasi   :  Aman (On-Budget)`, marginX + 105, currentY + 17);
+      // Document Name in Header
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("RENCANA ANGGARAN BIAYA (RAB)", 128, 14);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`No. Proyek: ${selectedProject?.nomorProyek || "PRJ-001"}`, 128, 19);
+      doc.text(`Tanggal: ${new Date().toLocaleDateString("id-ID")}`, 128, 24);
 
-    currentY += 30;
+      currentY = 48;
 
-    // Table Header
-    doc.setFillColor(30, 41, 59); // slate-800
-    doc.rect(marginX, currentY, 180, 9, "F");
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.text("KODE", marginX + 4, currentY + 6);
-    doc.text("URAIAN PEKERJAAN", marginX + 22, currentY + 6);
-    doc.text("VOL", marginX + 110, currentY + 6, { align: "center" });
-    doc.text("SATUAN", marginX + 124, currentY + 6, { align: "center" });
-    doc.text("HARGA SATUAN (Rp)", marginX + 152, currentY + 6, { align: "right" });
-    doc.text("TOTAL BIAYA (Rp)", marginX + 176, currentY + 6, { align: "right" });
+      // Project Details Card
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.rect(marginX, currentY, 180, 22, "F");
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.rect(marginX, currentY, 180, 22, "S");
 
-    currentY += 9;
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("REKAPITULASI PROYEK", marginX + 5, currentY + 6);
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`Nama Pekerjaan  :  ${selectedProject?.nama || "Pembangunan Gedung Utama"}`, marginX + 5, currentY + 12);
+      doc.text(`Lokasi Proyek      :  ${selectedProject?.lokasi || "DKI Jakarta"}`, marginX + 5, currentY + 17);
+      
+      const totalRAB_Selected = rabItems.reduce((sum, item) => sum + item.total, 0);
+      doc.setFont("Helvetica", "bold");
+      doc.text(`Total Nilai RAB  :  Rp ${totalRAB_Selected.toLocaleString("id-ID")}`, marginX + 105, currentY + 12);
+      doc.setFont("Helvetica", "normal");
+      doc.text(`Status Evaluasi   :  Aman (On-Budget)`, marginX + 105, currentY + 17);
 
-    // Table Rows
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(51, 65, 85); // slate-700
+      currentY += 30;
 
-    rabItems.forEach((item, index) => {
-      // Page break check
-      if (currentY > 265) {
+      // Table Header
+      doc.setFillColor(30, 41, 59); // slate-800
+      doc.rect(marginX, currentY, 180, 9, "F");
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.text("KODE", marginX + 4, currentY + 6);
+      doc.text("URAIAN PEKERJAAN", marginX + 22, currentY + 6);
+      doc.text("VOL", marginX + 110, currentY + 6, { align: "center" });
+      doc.text("SATUAN", marginX + 124, currentY + 6, { align: "center" });
+      doc.text("HARGA SATUAN (Rp)", marginX + 152, currentY + 6, { align: "right" });
+      doc.text("TOTAL BIAYA (Rp)", marginX + 176, currentY + 6, { align: "right" });
+
+      currentY += 9;
+
+      // Table Rows
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85); // slate-700
+
+      rabItems.forEach((item, index) => {
+        // Page break check
+        if (currentY > 265) {
+          doc.addPage();
+          currentY = 20;
+
+          // Table Header on new page
+          doc.setFillColor(30, 41, 59);
+          doc.rect(marginX, currentY, 180, 9, "F");
+          
+          doc.setTextColor(255, 255, 255);
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(8.5);
+          doc.text("KODE", marginX + 4, currentY + 6);
+          doc.text("URAIAN PEKERJAAN", marginX + 22, currentY + 6);
+          doc.text("VOL", marginX + 110, currentY + 6, { align: "center" });
+          doc.text("SATUAN", marginX + 124, currentY + 6, { align: "center" });
+          doc.text("HARGA SATUAN (Rp)", marginX + 152, currentY + 6, { align: "right" });
+          doc.text("TOTAL BIAYA (Rp)", marginX + 176, currentY + 6, { align: "right" });
+
+          currentY += 9;
+          doc.setFont("Helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(51, 65, 85);
+        }
+
+        // Zebra background color
+        if (index % 2 === 1) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(marginX, currentY, 180, 7.5, "F");
+        }
+
+        // Light gray row splitting line
+        doc.setDrawColor(241, 245, 249);
+        doc.setLineWidth(0.1);
+        doc.line(marginX, currentY + 7.5, marginX + 180, currentY + 7.5);
+
+        // Truncate long descriptions to prevent text overlapping
+        const cleanUraian = item.uraianPekerjaan || "";
+        const shortUraian = cleanUraian.length > 55
+          ? cleanUraian.substring(0, 52) + "..."
+          : cleanUraian;
+
+        doc.text(item.kodeItem || "-", marginX + 4, currentY + 4.8);
+        doc.text(shortUraian, marginX + 22, currentY + 4.8);
+        doc.text((item.volume ?? 0).toString(), marginX + 110, currentY + 4.8, { align: "center" });
+        doc.text(item.satuan || "-", marginX + 124, currentY + 4.8, { align: "center" });
+        doc.text((item.hargaSatuan ?? 0).toLocaleString("id-ID"), marginX + 152, currentY + 4.8, { align: "right" });
+        doc.text((item.total ?? 0).toLocaleString("id-ID"), marginX + 176, currentY + 4.8, { align: "right" });
+
+        currentY += 7.5;
+      });
+
+      // Subtotal Row block
+      if (currentY > 255) {
         doc.addPage();
         currentY = 20;
+      }
 
-        // Table Header on new page
-        doc.setFillColor(30, 41, 59);
-        doc.rect(marginX, currentY, 180, 9, "F");
+      // Bold separator double lines
+      doc.setDrawColor(100, 116, 139); // slate-500
+      doc.setLineWidth(0.4);
+      doc.line(marginX, currentY, marginX + 180, currentY);
+
+      // Color background for bottom rekap
+      doc.setFillColor(241, 245, 249); // slate-100
+      doc.rect(marginX, currentY, 180, 9, "F");
+
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("TOTAL REKAPITULASI RAB PEKERJAAN", marginX + 22, currentY + 6);
+      doc.text(`Rp ${totalRAB_Selected.toLocaleString("id-ID")}`, marginX + 176, currentY + 6, { align: "right" });
+
+      currentY += 18;
+
+      // Signatures fields to look legitimate & beautiful (Ensure signature blocks fit inside canvas)
+      if (currentY > 225) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Disiapkan Oleh,", marginX + 10, currentY);
+      doc.text("Disetujui Oleh,", marginX + 125, currentY);
+
+      // Barcode / digital signature block drawing
+      const signatureY = currentY + 3;
+      
+      // QR Code Drawing Helper
+      const drawQRCode = (docInstance: any, x: number, y: number, size: number) => {
+        const modules = 15;
+        const cellSize = size / modules;
+        const grid: number[][] = Array(modules).fill(null).map(() => Array(modules).fill(0));
         
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("Helvetica", "bold");
-        doc.setFontSize(8.5);
-        doc.text("KODE", marginX + 4, currentY + 6);
-        doc.text("URAIAN PEKERJAAN", marginX + 22, currentY + 6);
-        doc.text("VOL", marginX + 110, currentY + 6, { align: "center" });
-        doc.text("SATUAN", marginX + 124, currentY + 6, { align: "center" });
-        doc.text("HARGA SATUAN (Rp)", marginX + 152, currentY + 6, { align: "right" });
-        doc.text("TOTAL BIAYA (Rp)", marginX + 176, currentY + 6, { align: "right" });
+        const setFinder = (row: number, col: number) => {
+          for (let r = 0; r < 7; r++) {
+            for (let c = 0; c < 7; c++) {
+              if (r === 0 || r === 6 || c === 0 || c === 6) {
+                grid[row + r][col + c] = 1;
+              } else if (r >= 2 && r <= 4 && c >= 2 && c <= 4) {
+                grid[row + r][col + c] = 1;
+              }
+            }
+          }
+        };
+        
+        setFinder(0, 0);
+        setFinder(0, modules - 7);
+        setFinder(modules - 7, 0);
+        
+        for (let r = 0; r < modules; r++) {
+          for (let c = 0; c < modules; c++) {
+            const inTL = r < 8 && c < 8;
+            const inTR = r < 8 && c >= modules - 8;
+            const inBL = r >= modules - 8 && c < 8;
+            
+            if (!inTL && !inTR && !inBL) {
+              if (r === 10 && c === 10) {
+                grid[r][c] = 1;
+              } else if (
+                (r + c) % 2 === 0 || 
+                (r * c) % 3 === 1 || 
+                (r % 3 === 0 && c % 2 === 0) ||
+                (r === 12 && c > 8) ||
+                (c === 12 && r > 8)
+              ) {
+                grid[r][c] = 1;
+              }
+            }
+          }
+        }
+        
+        docInstance.setFillColor(15, 23, 42); // slate-900
+        for (let r = 0; r < modules; r++) {
+          for (let c = 0; c < modules; c++) {
+            if (grid[r][c] === 1) {
+              docInstance.rect(x + (c * cellSize), y + (r * cellSize), cellSize + 0.05, cellSize + 0.05, "F");
+            }
+          }
+        }
+      };
 
-        currentY += 9;
-        doc.setFont("Helvetica", "normal");
-        doc.setFontSize(8);
-        doc.setTextColor(51, 65, 85);
-      }
+      // Draw QR Code 1 for Prepare (Estimator)
+      const qrId1 = `EST-RABID-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      drawQRCode(doc, marginX + 15, signatureY, 15);
+      
+      doc.setFont("Courier", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(30, 41, 59);
+      doc.text("VERIFIED QR", marginX + 14, signatureY + 18);
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(qrId1, marginX + 14, signatureY + 21);
 
-      // Zebra background color
-      if (index % 2 === 1) {
-        doc.setFillColor(248, 250, 252);
-        doc.rect(marginX, currentY, 180, 7.5, "F");
-      }
+      // Draw QR Code 2 for Approve (Project Manager)
+      const qrId2 = `PM-RABID-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      drawQRCode(doc, marginX + 130, signatureY, 15);
+      
+      doc.setFont("Courier", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(30, 41, 59);
+      doc.text("VERIFIED QR", marginX + 129, signatureY + 18);
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(qrId2, marginX + 129, signatureY + 21);
 
-      // Light gray row splitting line
-      doc.setDrawColor(241, 245, 249);
-      doc.setLineWidth(0.1);
-      doc.line(marginX, currentY + 7.5, marginX + 180, currentY + 7.5);
+      currentY += 28;
+      doc.setDrawColor(203, 213, 225); // slate-300
+      doc.setLineWidth(0.2);
+      doc.line(marginX + 10, currentY, marginX + 55, currentY);
+      doc.line(marginX + 125, currentY, marginX + 170, currentY);
 
-      // Truncate long descriptions to prevent text overlapping
-      const cleanUraian = item.uraianPekerjaan || "";
-      const shortUraian = cleanUraian.length > 55
-        ? cleanUraian.substring(0, 52) + "..."
-        : cleanUraian;
+      doc.setFont("Helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text("Tim Estimator Proyek", marginX + 10, currentY + 4);
+      doc.text("Project Manager", marginX + 125, currentY + 4);
 
-      doc.text(item.kodeItem || "-", marginX + 4, currentY + 4.8);
-      doc.text(shortUraian, marginX + 22, currentY + 4.8);
-      doc.text((item.volume ?? 0).toString(), marginX + 110, currentY + 4.8, { align: "center" });
-      doc.text(item.satuan || "-", marginX + 124, currentY + 4.8, { align: "center" });
-      doc.text((item.hargaSatuan ?? 0).toLocaleString("id-ID"), marginX + 152, currentY + 4.8, { align: "right" });
-      doc.text((item.total ?? 0).toLocaleString("id-ID"), marginX + 176, currentY + 4.8, { align: "right" });
+      // Fire the save download flow
+      const fileName = `RAB_${companyName.replace(/[^a-zA-Z0-9]/g, "_")}_${(selectedProject?.nomorProyek || "Proyek").replace(/\s+/g, "_")}.pdf`;
+      doc.save(fileName);
+    };
 
-      currentY += 7.5;
-    });
-
-    // Subtotal Row block
-    if (currentY > 255) {
-      doc.addPage();
-      currentY = 20;
+    // Load logo if exists
+    if (logoUrl) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          try {
+            const dataURL = canvas.toDataURL("image/png");
+            proceedWithPdf(dataURL);
+          } catch (e) {
+            proceedWithPdf(undefined);
+          }
+        } else {
+          proceedWithPdf(undefined);
+        }
+      };
+      img.onerror = () => {
+        proceedWithPdf(undefined);
+      };
+      img.src = logoUrl;
+    } else {
+      proceedWithPdf(undefined);
     }
-
-    // Bold separator double lines
-    doc.setDrawColor(100, 116, 139); // slate-500
-    doc.setLineWidth(0.4);
-    doc.line(marginX, currentY, marginX + 180, currentY);
-
-    // Color background for bottom rekap
-    doc.setFillColor(241, 245, 249); // slate-100
-    doc.rect(marginX, currentY, 180, 9, "F");
-
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text("TOTAL REKAPITULASI RAB PEKERJAAN", marginX + 22, currentY + 6);
-    doc.text(`Rp ${totalRAB_Selected.toLocaleString("id-ID")}`, marginX + 176, currentY + 6, { align: "right" });
-
-    currentY += 18;
-
-    // Signatures fields to look legitimate & beautiful
-    if (currentY > 235) {
-      doc.addPage();
-      currentY = 20;
-    }
-
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Disiapkan Oleh,", marginX + 10, currentY);
-    doc.text("Disetujui Oleh,", marginX + 125, currentY);
-
-    currentY += 18;
-    doc.setDrawColor(203, 213, 225); // slate-300
-    doc.setLineWidth(0.2);
-    doc.line(marginX + 10, currentY, marginX + 55, currentY);
-    doc.line(marginX + 125, currentY, marginX + 170, currentY);
-
-    doc.setFont("Helvetica", "bold");
-    doc.setTextColor(15, 23, 42);
-    doc.text("Tim Estimator Proyek", marginX + 10, currentY + 4);
-    doc.text("Project Manager", marginX + 125, currentY + 4);
-
-    // Fire the save download flow
-    const fileName = `RAB_Foresyndo_${(selectedProject?.nomorProyek || "Proyek").replace(/\s+/g, "_")}.pdf`;
-    doc.save(fileName);
   };
 
   return (

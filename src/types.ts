@@ -178,6 +178,7 @@ export interface DocumentRecord {
   version: string;
   status: "Draft" | "Approved" | "Rejected" | "Pending Approval";
   createdAt: string;
+  dueDate?: string;
   comments?: RFIDiscussionComment[];
   statusHistory?: RFIStatusHistory[];
 }

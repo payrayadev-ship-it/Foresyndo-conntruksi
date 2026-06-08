@@ -142,7 +142,7 @@ const INITIAL_BQ_DATA: Record<string, BQItem[]> = {
 };
 
 export const BQManagement: React.FC = () => {
-  const { selectedProject, loginUser, rabItems, addRABItem } = useProject();
+  const { selectedProject, loginUser, rabItems, addRABItem, portalSettings } = useProject();
   const activeProjId = selectedProject?.id || "proj-001";
 
   const [bqList, setBqList] = useState<Record<string, BQItem[]>>(() => {
@@ -548,103 +548,281 @@ export const BQManagement: React.FC = () => {
       format: "a4"
     });
 
-    const marginX = 15;
-    let currentY = 20;
+    const companyName = portalSettings?.companyName || "PT FORESYNDO KONSTRUKSI GROUP";
+    const companyAddress = portalSettings?.companyAddress || "Gedung Graha Lestari, Menteng Jakarta Pusat";
+    const companyEmail = portalSettings?.companyEmail || "support@foresyndo.com";
+    const companyPhone = portalSettings?.companyPhone || "+62 21-8888-888";
+    const logoUrl = portalSettings?.logoUrl;
 
-    // Premium Navy Banner
-    doc.setFillColor(15, 23, 42); 
-    doc.rect(0, 0, 297, 38, "F");
+    const proceedWithBQPdf = (imageBase64?: string) => {
+      const marginX = 15;
+      let currentY = 20;
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("PT FORESYNDO KONSTRUKSI GROUP", marginX, 15);
-    
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("Engineering, Procurement & Civil Estimator Services Suite", marginX, 21);
-    doc.text("E-mail: support@foresyndo.com | Telp: +62 21-8888-888", marginX, 26);
+      // Premium Navy Banner
+      doc.setFillColor(15, 23, 42); 
+      doc.rect(0, 0, 297, 38, "F");
 
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("BILL OF QUANTITIES (BOQ / BQ)", 185, 15);
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Proyek: ${selectedProject?.namaProyek || "BSD Office Tower"}`, 185, 21);
-    doc.text(`Dicetak: ${new Date().toLocaleString()}`, 185, 26);
-
-    currentY = 48;
-
-    // Table view
-    doc.setFillColor(241, 245, 249);
-    doc.rect(marginX, currentY, 267, 8, "F");
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(51, 65, 85);
-
-    doc.text("KODE", marginX + 3, currentY + 5.5);
-    doc.text("URAIAN PEKERJAAN & DETAIL SPESIFIKASI", marginX + 22, currentY + 5.5);
-    doc.text("KUANTITAS", marginX + 152, currentY + 5.5);
-    doc.text("SATUAN", marginX + 182, currentY + 5.5);
-    doc.text("HARGA SATUAN (RP)", marginX + 212, currentY + 5.5, { align: "right" });
-    doc.text("TOTAL BIAYA (RP)", marginX + 252, currentY + 5.5, { align: "right" });
-
-    currentY += 8;
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(15, 23, 42);
-
-    const filtered = items.filter(i => filterDivision === "ALL" || i.division === filterDivision);
-
-    filtered.forEach((item, index) => {
-      if (currentY > 185) {
-        doc.addPage();
-        currentY = 20;
-        doc.setFillColor(241, 245, 249);
-        doc.rect(marginX, currentY, 267, 8, "F");
-        doc.setFont("Helvetica", "bold");
-        doc.text("KODE", marginX + 3, currentY + 5.5);
-        doc.text("URAIAN PEKERJAAN & DETAIL SPESIFIKASI", marginX + 22, currentY + 5.5);
-        doc.text("KUANTITAS", marginX + 152, currentY + 5.5);
-        doc.text("SATUAN", marginX + 182, currentY + 5.5);
-        doc.text("HARGA SATUAN (RP)", marginX + 212, currentY + 5.5, { align: "right" });
-        doc.text("TOTAL BIAYA (RP)", marginX + 252, currentY + 5.5, { align: "right" });
-        currentY += 8;
-        doc.setFont("Helvetica", "normal");
+      let logoOffset = 0;
+      if (imageBase64) {
+        try {
+          doc.addImage(imageBase64, "PNG", marginX, 8, 14, 14);
+          logoOffset = 18;
+        } catch (e) {
+          console.warn("Could not draw loaded image on BQ PDF", e);
+        }
       }
 
-      doc.setDrawColor(241, 245, 249);
-      doc.line(marginX, currentY, marginX + 267, currentY);
+      // Draw stylized construction vector badge if no logo image or as a combined design element
+      if (!imageBase64) {
+        doc.setDrawColor(245, 158, 11); // Amber Accent
+        doc.setLineWidth(0.8);
+        doc.line(marginX, 9, marginX, 23);
+        doc.line(marginX, 23, marginX + 11, 23);
+        doc.line(marginX + 5.5, 9, marginX + 5.5, 23);
+        doc.line(marginX + 11, 9, marginX + 11, 23);
+        doc.line(marginX, 9, marginX + 11, 9);
+        doc.line(marginX, 16, marginX + 11, 16);
+        logoOffset = 15;
+      }
 
+      // Title & Company details
+      doc.setTextColor(255, 255, 255);
       doc.setFont("Helvetica", "bold");
-      doc.text(item.code, marginX + 3, currentY + 5);
+      doc.setFontSize(14);
+      doc.text(companyName.toUpperCase(), marginX + logoOffset, 14);
       
-      let text = item.name;
-      if (text.length > 70) text = text.substring(0, 68) + "...";
       doc.setFont("Helvetica", "normal");
-      doc.text(text, marginX + 22, currentY + 5);
+      doc.setFontSize(8);
+      
+      // Multi-line address logic
+      const addressLines = doc.splitTextToSize(companyAddress, 140);
+      const firstLineAddress = addressLines[0] || "";
+      const secondLineAddress = addressLines[1] ? addressLines[1].substring(0, 65) + "..." : "";
+      
+      doc.text(firstLineAddress + (secondLineAddress ? " " + secondLineAddress : ""), marginX + logoOffset, 19);
+      doc.text(`E-mail: ${companyEmail} | Telp: ${companyPhone}`, marginX + logoOffset, 24);
 
-      doc.text(item.qty.toLocaleString(), marginX + 152, currentY + 5);
-      doc.text(item.unit, marginX + 182, currentY + 5);
-      doc.text(item.unitPrice.toLocaleString("id-ID"), marginX + 212, currentY + 5, { align: "right" });
+      // PDF Title
       doc.setFont("Helvetica", "bold");
-      doc.text(item.total.toLocaleString("id-ID"), marginX + 252, currentY + 5, { align: "right" });
+      doc.setFontSize(12);
+      doc.text("BILL OF QUANTITIES (BOQ / BQ)", 195, 14);
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.text(`Proyek: ${selectedProject?.nama || "BSD Office Tower"}`, 195, 19);
+      doc.text(`Dicetak: ${new Date().toLocaleString("id-ID")}`, 195, 24);
+
+      currentY = 48;
+
+      // Table view
+      doc.setFillColor(241, 245, 249);
+      doc.rect(marginX, currentY, 267, 8, "F");
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(51, 65, 85);
+
+      doc.text("KODE", marginX + 3, currentY + 5.5);
+      doc.text("URAIAN PEKERJAAN & DETAIL SPESIFIKASI", marginX + 22, currentY + 5.5);
+      doc.text("KUANTITAS", marginX + 152, currentY + 5.5);
+      doc.text("SATUAN", marginX + 182, currentY + 5.5);
+      doc.text("HARGA SATUAN (RP)", marginX + 212, currentY + 5.5, { align: "right" });
+      doc.text("TOTAL BIAYA (RP)", marginX + 252, currentY + 5.5, { align: "right" });
 
       currentY += 8;
-    });
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
 
-    // Subtotal
-    doc.setDrawColor(51, 65, 85);
-    doc.setLineWidth(0.3);
-    doc.line(marginX, currentY, marginX + 267, currentY);
-    
-    doc.setFillColor(248, 250, 252);
-    doc.rect(marginX, currentY, 267, 9, "F");
-    doc.setFont("Helvetica", "bold");
-    doc.text("TOTAL NILAI ESTIMASI BILL OF QUANTITIES (BQ)", marginX + 22, currentY + 6);
-    doc.text(`Rp ${totalBQ.toLocaleString("id-ID")}`, marginX + 252, currentY + 6, { align: "right" });
+      const filtered = items.filter(i => filterDivision === "ALL" || i.division === filterDivision);
 
-    doc.save(`Bill_of_Quantities_Foresyndo_${selectedProject?.nomorProyek || "PRJ"}.pdf`);
+      filtered.forEach((item, index) => {
+        if (currentY > 180) {
+          doc.addPage();
+          currentY = 20;
+          doc.setFillColor(241, 245, 249);
+          doc.rect(marginX, currentY, 267, 8, "F");
+          doc.setFont("Helvetica", "bold");
+          doc.text("KODE", marginX + 3, currentY + 5.5);
+          doc.text("URAIAN PEKERJAAN & DETAIL SPESIFIKASI", marginX + 22, currentY + 5.5);
+          doc.text("KUANTITAS", marginX + 152, currentY + 5.5);
+          doc.text("SATUAN", marginX + 182, currentY + 5.5);
+          doc.text("HARGA SATUAN (RP)", marginX + 212, currentY + 5.5, { align: "right" });
+          doc.text("TOTAL BIAYA (RP)", marginX + 252, currentY + 5.5, { align: "right" });
+          currentY += 8;
+          doc.setFont("Helvetica", "normal");
+        }
+
+        doc.setDrawColor(241, 245, 249);
+        doc.line(marginX, currentY, marginX + 267, currentY);
+
+        doc.setFont("Helvetica", "bold");
+        doc.text(item.code, marginX + 3, currentY + 5);
+        
+        let text = item.name;
+        if (text.length > 70) text = text.substring(0, 68) + "...";
+        doc.setFont("Helvetica", "normal");
+        doc.text(text, marginX + 22, currentY + 5);
+
+        doc.text(item.qty.toLocaleString(), marginX + 152, currentY + 5);
+        doc.text(item.unit, marginX + 182, currentY + 5);
+        doc.text(item.unitPrice.toLocaleString("id-ID"), marginX + 212, currentY + 5, { align: "right" });
+        doc.setFont("Helvetica", "bold");
+        doc.text(item.total.toLocaleString("id-ID"), marginX + 252, currentY + 5, { align: "right" });
+
+        currentY += 8;
+      });
+
+      // Subtotal
+      doc.setDrawColor(51, 65, 85);
+      doc.setLineWidth(0.3);
+      doc.line(marginX, currentY, marginX + 267, currentY);
+      
+      doc.setFillColor(248, 250, 252);
+      doc.rect(marginX, currentY, 267, 9, "F");
+      doc.setFont("Helvetica", "bold");
+      doc.text("TOTAL NILAI ESTIMASI BILL OF QUANTITIES (BQ)", marginX + 22, currentY + 6);
+      doc.text(`Rp ${totalBQ.toLocaleString("id-ID")}`, marginX + 252, currentY + 6, { align: "right" });
+
+      currentY += 15;
+
+      // Signature block in Landscape layout
+      if (currentY > 175) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Disiapkan Oleh,", marginX + 15, currentY);
+      doc.text("Disetujui Oleh,", marginX + 185, currentY);
+
+      const sigY = currentY + 3;
+
+      // QR Code Drawing Helper
+      const drawQRCode = (docInstance: any, x: number, y: number, size: number) => {
+        const modules = 15;
+        const cellSize = size / modules;
+        const grid: number[][] = Array(modules).fill(null).map(() => Array(modules).fill(0));
+        
+        const setFinder = (row: number, col: number) => {
+          for (let r = 0; r < 7; r++) {
+            for (let c = 0; c < 7; c++) {
+              if (r === 0 || r === 6 || c === 0 || c === 6) {
+                grid[row + r][col + c] = 1;
+              } else if (r >= 2 && r <= 4 && c >= 2 && c <= 4) {
+                grid[row + r][col + c] = 1;
+              }
+            }
+          }
+        };
+        
+        setFinder(0, 0);
+        setFinder(0, modules - 7);
+        setFinder(modules - 7, 0);
+        
+        for (let r = 0; r < modules; r++) {
+          for (let c = 0; c < modules; c++) {
+            const inTL = r < 8 && c < 8;
+            const inTR = r < 8 && c >= modules - 8;
+            const inBL = r >= modules - 8 && c < 8;
+            
+            if (!inTL && !inTR && !inBL) {
+              if (r === 10 && c === 10) {
+                grid[r][c] = 1;
+              } else if (
+                (r + c) % 2 === 0 || 
+                (r * c) % 3 === 1 || 
+                (r % 3 === 0 && c % 2 === 0) ||
+                (r === 12 && c > 8) ||
+                (c === 12 && r > 8)
+              ) {
+                grid[r][c] = 1;
+              }
+            }
+          }
+        }
+        
+        docInstance.setFillColor(15, 23, 42); // slate-900
+        for (let r = 0; r < modules; r++) {
+          for (let c = 0; c < modules; c++) {
+            if (grid[r][c] === 1) {
+              docInstance.rect(x + (c * cellSize), y + (r * cellSize), cellSize + 0.05, cellSize + 0.05, "F");
+            }
+          }
+        }
+      };
+
+      // Draw QR Code 1 for Prepare (Estimator)
+      const qrId1 = `EST-BQID-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      drawQRCode(doc, marginX + 20, sigY, 15);
+      
+      doc.setFont("Courier", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(30, 41, 59);
+      doc.text("VERIFIED QR", marginX + 19, sigY + 18);
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(qrId1, marginX + 19, sigY + 21);
+
+      // Draw QR Code 2 for Approve (Project Manager)
+      const qrId2 = `PM-BQID-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      drawQRCode(doc, marginX + 190, sigY, 15);
+      
+      doc.setFont("Courier", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(30, 41, 59);
+      doc.text("VERIFIED QR", marginX + 189, sigY + 18);
+      doc.setFont("Courier", "normal");
+      doc.setFontSize(5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(qrId2, marginX + 189, sigY + 21);
+
+      currentY += 28;
+      doc.setDrawColor(203, 213, 225); // slate-300
+      doc.setLineWidth(0.2);
+      doc.line(marginX + 15, currentY, marginX + 65, currentY);
+      doc.line(marginX + 185, currentY, marginX + 235, currentY);
+
+      doc.setFont("Helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(8.5);
+      doc.text("Tim Estimator Proyek", marginX + 15, currentY + 4);
+      doc.text("Project Manager", marginX + 185, currentY + 4);
+
+      // Save document
+      const fileName = `BOQ_${companyName.replace(/[^a-zA-Z0-9]/g, "_")}_${(selectedProject?.nomorProyek || "PRJ").replace(/\s+/g, "_")}.pdf`;
+      doc.save(fileName);
+    };
+
+    // Load logo if exists
+    if (logoUrl) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          try {
+            const dataURL = canvas.toDataURL("image/png");
+            proceedWithBQPdf(dataURL);
+          } catch (e) {
+            proceedWithBQPdf(undefined);
+          }
+        } else {
+          proceedWithBQPdf(undefined);
+        }
+      };
+      img.onerror = () => {
+        proceedWithBQPdf(undefined);
+      };
+      img.src = logoUrl;
+    } else {
+      proceedWithBQPdf(undefined);
+    }
   };
 
   const selectedItem = items.find(i => i.id === selectedBq);
